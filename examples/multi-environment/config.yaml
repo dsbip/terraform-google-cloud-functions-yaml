@@ -1,0 +1,75 @@
+# yaml-language-server: $schema=../../schemas/cloud-functions-config.schema.json
+#
+# One file for every environment. main.tf calls the module once per
+# environment with different template variables; templatefile() directives
+# switch whole blocks on and off, and `enabled` keeps a function out of an
+# environment while still validating it.
+#
+# Variables: env (dev, staging, prod), project_id, source_bucket,
+# max_instances, alert_topic.
+#
+# Placeholders that contain ": " or quotes are wrapped in single quotes, so the
+# file is valid YAML both before rendering (for editors) and after.
+
+defaults:
+  region: europe-west1
+  labels:
+    environment: ${env}
+  functions:
+    build_config:
+      runtime: python312
+      entry_point: handler
+      source:
+        bucket: ${source_bucket}
+        object_prefix: ${env}/
+    service_config:
+      max_instance_count: ${max_instances}
+      environment_variables:
+        ENVIRONMENT: ${env}
+%{ if env == "prod" ~}
+      min_instance_count: 1
+      ingress_settings: ALLOW_INTERNAL_AND_GCLB
+%{ endif ~}
+
+functions:
+  api:
+    description: Public API (${env}).
+    build_config:
+      source: { dir: src/api }
+    service_config:
+      available_memory: '${env == "prod" ? "1Gi" : "256M"}'
+    invokers:
+%{ if env == "prod" ~}
+      - serviceAccount:api-gateway@${project_id}.iam.gserviceaccount.com
+%{ else ~}
+      - allUsers
+%{ endif ~}
+
+  worker:
+    description: Background worker (${env}).
+    build_config:
+      source: { dir: src/worker }
+    event_trigger:
+      pubsub_topic: jobs-${env}
+      retry_policy: '${env == "prod" ? "RETRY_POLICY_RETRY" : "RETRY_POLICY_DO_NOT_RETRY"}'
+      service_account_email: worker-trigger@${project_id}.iam.gserviceaccount.com
+    invokers:
+      - serviceAccount:worker-trigger@${project_id}.iam.gserviceaccount.com
+
+  # Only in dev; in other environments it is validated but not deployed.
+  debug-echo:
+    enabled: ${env == "dev"}
+    description: Echo endpoint for debugging.
+    build_config:
+      source: { dir: src/debug }
+    invokers: [group:developers@example.com]
+
+%{ if alert_topic != "" ~}
+  # Only where an alert topic is configured.
+  alert-forwarder:
+    description: Forwards alerts to the on-call channel.
+    build_config:
+      source: { dir: src/worker }
+    event_trigger:
+      pubsub_topic: ${alert_topic}
+%{ endif ~}

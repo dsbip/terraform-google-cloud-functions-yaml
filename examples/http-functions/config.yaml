@@ -1,0 +1,106 @@
+# yaml-language-server: $schema=../../schemas/cloud-functions-config.schema.json
+#
+# HTTP functions in four runtimes, showing the common runtime settings:
+# memory and CPU, concurrency, warm instances, timeouts, ingress, environment
+# variables, Secret Manager secrets, who may invoke a function, and base-image
+# update policies.
+#
+# defaults.functions is merged underneath every function, so each function
+# only states what differs. Mappings merge (environment_variables below ends up
+# with LOG_LEVEL plus the function's own variables); lists replace.
+
+defaults:
+  region: ${region}
+  labels:
+    team: storefront
+    cost-center: cc-1234
+  functions:
+    build_config:
+      source:
+        bucket: ${source_bucket}
+        object_prefix: http-functions/
+      runtime_update_policy: AUTOMATIC
+    service_config:
+      service_account_email: storefront-fns@${project_id}.iam.gserviceaccount.com
+      max_instance_count: 10
+      environment_variables:
+        LOG_LEVEL: info
+
+functions:
+  # Public, scales to zero.
+  greeter:
+    description: Public greeting endpoint.
+    build_config:
+      runtime: python312
+      entry_point: greet
+      source:
+        dir: src/greeter-py
+    service_config:
+      available_memory: 256M
+      environment_variables:
+        GREETING_LANGUAGE: de
+    invokers: [allUsers]
+
+  # Authenticated API: two warm instances, one CPU serving 40 concurrent
+  # requests each, and an API key from Secret Manager.
+  orders-api:
+    description: Order intake API (authenticated).
+    labels:
+      tier: critical
+    build_config:
+      runtime: nodejs22
+      entry_point: createOrder
+      source:
+        dir: src/orders-node
+        excludes: [node_modules/**, "*.test.js"]
+    service_config:
+      available_memory: 1Gi
+      available_cpu: "1"
+      min_instance_count: 2
+      max_instance_count: 50
+      max_instance_request_concurrency: 40
+      timeout_seconds: 30
+      secret_environment_variables:
+        - key: ORDERS_API_KEY
+          secret: orders-api-key        # latest version, same project
+    invokers:
+      - serviceAccount:checkout@${project_id}.iam.gserviceaccount.com
+      - group:storefront-devs@example.com
+
+  # Internal only: reachable from the VPC and other Google Cloud services.
+  pricing:
+    description: Price quotes for internal callers.
+    build_config:
+      runtime: go123
+      entry_point: Quote
+      source:
+        dir: src/pricing-go
+      runtime_update_policy: ON_DEPLOY
+    service_config:
+      available_memory: 512M
+      ingress_settings: ALLOW_INTERNAL_ONLY
+      timeout_seconds: 10
+    invokers:
+      - serviceAccount:checkout@${project_id}.iam.gserviceaccount.com
+
+  # Long-running report generation in Java; only the reporting group may call
+  # it, and the platform team can view (not change) it.
+  daily-report:
+    description: Builds the daily orders report.
+    build_config:
+      runtime: java21
+      entry_point: com.example.Reports
+      source:
+        dir: src/reports-java
+        excludes: [target/**]
+      environment_variables:
+        GOOGLE_BUILDABLE: .           # build-time variable for the Java buildpack
+    service_config:
+      available_memory: 2Gi
+      available_cpu: "2"
+      timeout_seconds: 1800
+      max_instance_count: 2
+    invokers: [group:reporting@example.com]
+    iam:
+      - role: roles/cloudfunctions.viewer
+        members: [group:platform-team@example.com]

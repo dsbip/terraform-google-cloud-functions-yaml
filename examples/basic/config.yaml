@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=../../schemas/cloud-functions-config.schema.json
+#
+# Basic example: one public HTTP function built from the local src/hello
+# directory. The module zips the directory, uploads it to the source bucket
+# under a content hash, and redeploys only when the code changes.
+#
+# The project and region come from the module's variables (see main.tf); the
+# bucket name is a template variable.
+
+functions:
+  hello:
+    description: Says hello over HTTP.
+    build_config:
+      runtime: python312
+      entry_point: hello
+      source:
+        dir: src/hello
+        bucket: ${source_bucket}
+    service_config:
+      available_memory: 256M
+      max_instance_count: 3
+    invokers:
+      - allUsers   # public: anyone can call the function's URL

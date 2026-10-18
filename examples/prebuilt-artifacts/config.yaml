@@ -1,0 +1,82 @@
+# yaml-language-server: $schema=../../schemas/cloud-functions-config.schema.json
+#
+# Deploying code that was built elsewhere, for pipelines where CI produces the
+# artifact and Terraform only rolls it out:
+#   - zip:    a local archive (e.g. downloaded from the CI run), uploaded as-is
+#   - object: an archive CI already uploaded to Cloud Storage, optionally
+#             pinned to an object generation for exact, auditable releases
+#   - repo:   a branch, tag or commit in Cloud Source Repositories
+#
+# The release version is a template variable, so promoting a release is a
+# one-line change in the calling module.
+
+defaults:
+  region: us-east1
+  labels:
+    release: v${release}
+  functions:
+    build_config:
+      source:
+        bucket: ${artifact_bucket}
+    service_config:
+      max_instance_count: 20
+
+functions:
+  # Local zip built by CI; the object name contains the archive's MD5 hash.
+  invoice-renderer:
+    description: Renders invoices as HTML.
+    build_config:
+      runtime: nodejs22
+      entry_point: render
+      source:
+        zip: dist/invoice-renderer.zip
+        object_prefix: releases/
+    invokers: ["serviceAccount:billing@${project_id}.iam.gserviceaccount.com"]
+
+  # Archive uploaded by CI, addressed by release. The latest generation of the
+  # object is deployed.
+  tax-calculator:
+    description: Calculates sales tax.
+    build_config:
+      runtime: python312
+      entry_point: calculate
+      source:
+        object: tax-calculator/v${release}.zip
+    invokers: ["serviceAccount:billing@${project_id}.iam.gserviceaccount.com"]
+
+  # The same, pinned to one object generation: re-uploading the object does
+  # not change what is deployed.
+  fx-rates:
+    description: Currency conversion rates.
+    build_config:
+      runtime: go123
+      entry_point: Rates
+      source:
+        object: fx-rates/v${release}.zip
+        generation: ${fx_rates_generation}
+    service_config:
+      min_instance_count: 1
+
+  # Cloud Source Repositories (available to existing CSR customers): a tag in
+  # this project's repository, and a branch in a shared one.
+  legacy-export:
+    description: Nightly export, built from a release tag.
+    build_config:
+      runtime: python311
+      entry_point: export
+      source:
+        repo:
+          repo_name: legacy-export
+          tag_name: v${release}
+          dir: functions/export
+  legacy-import:
+    description: Import endpoint, built from the main branch of a shared repository.
+    build_config:
+      runtime: python311
+      entry_point: import_data
+      source:
+        repo:
+          project_id: shared-code
+          repo_name: integrations
+          branch_name: ^main$
+          dir: import

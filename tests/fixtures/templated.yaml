@@ -1,0 +1,30 @@
+# Rendered with templatefile(): env and team come from template_vars,
+# project_id and region from the module's variables.
+defaults:
+  region: ${region}
+  labels:
+    environment: ${env}
+  functions:
+    build_config:
+      runtime: python312
+      source:
+        bucket: ${project_id}-sources
+
+functions:
+  api-${env}:
+    description: API for ${team} in ${project_id}
+    build_config:
+      source:
+        dir: config/src/app          # relative to this file
+%{ if env == "prod" ~}
+    service_config:
+      min_instance_count: 2
+%{ endif ~}
+    invokers:
+      - group:${team}@example.com
+  literal:
+    description: "Costs $${price}"
+    enabled: ${env == "prod"}
+    build_config:
+      source:
+        object: x.zip

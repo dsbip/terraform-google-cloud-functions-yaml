@@ -1,0 +1,104 @@
+# yaml-language-server: $schema=../../schemas/cloud-functions-config.schema.json
+#
+# Event-driven functions (Eventarc triggers) for four event sources:
+#   - Pub/Sub messages             (pubsub_topic; the event type is implied)
+#   - Cloud Storage object events  (event_filters on the bucket)
+#   - Firestore document writes    (path pattern filter)
+#   - Cloud Audit Logs entries     (service and method filters)
+#
+# Every trigger uses the same service account, which must be allowed to invoke
+# the functions: listing it in invokers grants roles/run.invoker.
+
+defaults:
+  region: ${region}
+  labels:
+    app: events-demo
+  functions:
+    build_config:
+      runtime: python312
+      source:
+        bucket: ${source_bucket}
+        object_prefix: event-driven/
+    service_config:
+      available_memory: 256M
+      max_instance_count: 5
+      timeout_seconds: 120
+      service_account_email: events-runtime@${project_id}.iam.gserviceaccount.com
+    event_trigger:
+      service_account_email: events-trigger@${project_id}.iam.gserviceaccount.com
+      retry_policy: RETRY_POLICY_RETRY
+    invokers:
+      - serviceAccount:events-trigger@${project_id}.iam.gserviceaccount.com
+
+functions:
+  # A short topic name means a topic in the function's project.
+  order-events:
+    description: Processes order events from Pub/Sub.
+    build_config:
+      entry_point: on_order
+      source: { dir: src/order-events }
+    event_trigger:
+      pubsub_topic: orders
+
+  # Topic in another project, given by its full name, without retries.
+  partner-feed:
+    description: Consumes the partner feed from the partner's project.
+    build_config:
+      entry_point: on_order
+      source: { dir: src/order-events }
+    event_trigger:
+      pubsub_topic: projects/partner-project/topics/feed
+      retry_policy: RETRY_POLICY_DO_NOT_RETRY
+
+  # The trigger region must be the bucket's location (here a dual-region in
+  # the US, so "us").
+  thumbnails:
+    description: Creates thumbnails of uploaded images.
+    build_config:
+      runtime: nodejs22
+      entry_point: makeThumbnail
+      source:
+        dir: src/thumbnails
+        excludes: [node_modules/**]
+    service_config:
+      available_memory: 1Gi
+      environment_variables:
+        THUMBNAIL_BUCKET: ${project_id}-thumbnails
+    event_trigger:
+      event_type: google.cloud.storage.object.v1.finalized
+      trigger_region: us
+      event_filters:
+        - attribute: bucket
+          value: ${project_id}-uploads
+
+  # Firestore: every write to users/{userId} in the (default) database.
+  profile-sync:
+    description: Syncs user profiles on Firestore writes.
+    build_config:
+      entry_point: on_user_written
+      source: { dir: src/profile-sync }
+    event_trigger:
+      event_type: google.cloud.firestore.document.v1.written
+      event_filters:
+        - attribute: database
+          value: (default)
+        - attribute: document
+          value: users/{userId}
+          operator: match-path-pattern
+
+  # Cloud Audit Logs: one event per service account key creation, anywhere
+  # in the project (audit triggers are global).
+  audit-watch:
+    description: Reports service account key creation.
+    build_config:
+      entry_point: on_key_created
+      source: { dir: src/audit-watch }
+    event_trigger:
+      event_type: google.cloud.audit.log.v1.written
+      trigger_region: global
+      retry_policy: RETRY_POLICY_DO_NOT_RETRY
+      event_filters:
+        - attribute: serviceName
+          value: iam.googleapis.com
+        - attribute: methodName
+          value: google.iam.admin.v1.CreateServiceAccountKey

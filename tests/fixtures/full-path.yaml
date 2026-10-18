@@ -1,0 +1,7 @@
+functions:
+  absolute:
+    build_config:
+      runtime: python312
+      source:
+        bucket: b
+        dir: ${dir}

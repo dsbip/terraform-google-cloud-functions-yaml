@@ -1,0 +1,750 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/dsbip/terraform-google-cloud-functions-yaml/schemas/cloud-functions-config.schema.json",
+  "title": "Cloud Functions YAML configuration",
+  "description": "Configuration file of the terraform-google-cloud-functions-yaml module.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "project_id": {
+      "type": "string",
+      "description": "Default project for every function in this file. Takes precedence over the module's project_id variable; a function-level project_id takes precedence over this."
+    },
+    "defaults": {
+      "$ref": "#/definitions/defaults"
+    },
+    "functions": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Cloud Run functions keyed by logical key (the default function name).",
+      "additionalProperties": {
+        "$ref": "#/definitions/function"
+      }
+    }
+  },
+  "definitions": {
+    "template_placeholder": {
+      "type": "string",
+      "description": "A ${...} placeholder, replaced when the module renders the file with templatefile().",
+      "pattern": "^.*\\$\\{[^}]+\\}.*$"
+    },
+    "labels": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Key/value labels. Numbers and booleans are converted to strings.",
+      "additionalProperties": {
+        "type": [
+          "string",
+          "number",
+          "boolean"
+        ]
+      }
+    },
+    "env_vars": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Environment variables. Numbers and booleans are converted to strings.",
+      "additionalProperties": {
+        "type": [
+          "string",
+          "number",
+          "boolean"
+        ]
+      }
+    },
+    "deletion_policy": {
+      "description": "Provider-level deletion policy. PREVENT makes terraform destroy fail; ABANDON removes the function from state without deleting it.",
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "DELETE",
+            "PREVENT",
+            "ABANDON"
+          ]
+        },
+        {
+          "$ref": "#/definitions/template_placeholder"
+        }
+      ]
+    },
+    "member": {
+      "description": "IAM member: user:, group:, serviceAccount:, domain:, principal://, principalSet://, allUsers or allAuthenticatedUsers.",
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^(allUsers|allAuthenticatedUsers|(user|group|serviceAccount|domain):\\S+|principal(Set)?://\\S+)$"
+        },
+        {
+          "$ref": "#/definitions/template_placeholder"
+        }
+      ]
+    },
+    "iam_condition": {
+      "type": "object",
+      "description": "IAM condition (CEL).",
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Condition title."
+        },
+        "expression": {
+          "type": "string",
+          "description": "CEL expression."
+        },
+        "description": {
+          "type": "string",
+          "description": "Condition description."
+        }
+      },
+      "required": [
+        "title",
+        "expression"
+      ]
+    },
+    "iam_binding": {
+      "type": "object",
+      "description": "Grants one IAM role to one or more members (non-authoritative, one google_cloudfunctions2_function_iam_member per member).",
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "type": "string",
+          "description": "IAM role, e.g. roles/cloudfunctions.viewer."
+        },
+        "members": {
+          "type": "array",
+          "description": "Members to grant the role to.",
+          "items": {
+            "$ref": "#/definitions/member"
+          },
+          "minItems": 1
+        },
+        "condition": {
+          "$ref": "#/definitions/iam_condition"
+        }
+      },
+      "required": [
+        "role",
+        "members"
+      ]
+    },
+    "defaults": {
+      "type": "object",
+      "description": "Values applied to every function unless the function sets its own. See docs/configuration.md for the merge rules.",
+      "additionalProperties": false,
+      "properties": {
+        "region": {
+          "type": "string",
+          "description": "Default region of every function, e.g. europe-west1. Takes precedence over the module's region variable."
+        },
+        "labels": {
+          "description": "Labels added to every function. Function labels with the same key take precedence.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/labels"
+            }
+          ]
+        },
+        "functions": {
+          "description": "Default function settings, merged underneath every function (mappings merge up to three levels deep; lists and other values are replaced).",
+          "allOf": [
+            {
+              "$ref": "#/definitions/function"
+            },
+            {
+              "propertyNames": {
+                "not": {
+                  "enum": [
+                    "name"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "function": {
+      "type": "object",
+      "description": "A Cloud Run function (Cloud Functions 2nd gen).",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "description": "Set to false to skip this function (default true). Handy with template variables per environment.",
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/definitions/template_placeholder"
+            }
+          ]
+        },
+        "name": {
+          "description": "Function name (default: the key). Lowercase letters, digits and hyphens; starts with a letter; at most 63 characters.",
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$"
+            },
+            {
+              "$ref": "#/definitions/template_placeholder"
+            }
+          ]
+        },
+        "project_id": {
+          "type": "string",
+          "description": "Project of this function. Takes precedence over the top-level project_id."
+        },
+        "region": {
+          "type": "string",
+          "description": "Region of this function. Takes precedence over defaults.region."
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description."
+        },
+        "labels": {
+          "description": "Labels, merged over defaults.labels and defaults.functions.labels.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/labels"
+            }
+          ]
+        },
+        "kms_key_name": {
+          "type": "string",
+          "description": "Cloud KMS key that encrypts the function (projects/P/locations/L/keyRings/R/cryptoKeys/K)."
+        },
+        "deletion_policy": {
+          "$ref": "#/definitions/deletion_policy"
+        },
+        "build_config": {
+          "$ref": "#/definitions/build_config"
+        },
+        "service_config": {
+          "$ref": "#/definitions/service_config"
+        },
+        "event_trigger": {
+          "$ref": "#/definitions/event_trigger"
+        },
+        "invokers": {
+          "type": "array",
+          "description": "Members allowed to call the function (roles/run.invoker on its Cloud Run service). allUsers makes an HTTP function public.",
+          "items": {
+            "$ref": "#/definitions/member"
+          }
+        },
+        "iam": {
+          "type": "array",
+          "description": "Additional IAM grants on the function.",
+          "items": {
+            "$ref": "#/definitions/iam_binding"
+          }
+        }
+      }
+    },
+    "build_config": {
+      "type": "object",
+      "description": "How the function is built.",
+      "additionalProperties": false,
+      "properties": {
+        "runtime": {
+          "description": "Runtime ID, e.g. python312, nodejs22, go123, java21, ruby33, php83, dotnet8.",
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(nodejs|python|go|java|ruby|php|dotnet)[0-9]+$"
+            },
+            {
+              "$ref": "#/definitions/template_placeholder"
+            }
+          ]
+        },
+        "entry_point": {
+          "type": "string",
+          "description": "Name of the function in the source code that is executed."
+        },
+        "source": {
+          "$ref": "#/definitions/source"
+        },
+        "environment_variables": {
+          "description": "Build-time environment variables.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/env_vars"
+            }
+          ]
+        },
+        "docker_repository": {
+          "type": "string",
+          "description": "Artifact Registry repository for the function image (projects/P/locations/L/repositories/R)."
+        },
+        "service_account": {
+          "type": "string",
+          "description": "Service account that runs the build (projects/P/serviceAccounts/EMAIL)."
+        },
+        "worker_pool": {
+          "type": "string",
+          "description": "Cloud Build private worker pool (projects/P/locations/L/workerPools/W)."
+        },
+        "runtime_update_policy": {
+          "description": "Base image security updates: AUTOMATIC (applied continuously) or ON_DEPLOY (applied when the function is deployed).",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "AUTOMATIC",
+                "ON_DEPLOY"
+              ]
+            },
+            {
+              "$ref": "#/definitions/template_placeholder"
+            }
+          ]
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "description": "Where the source code comes from. Set exactly one of dir, zip, object and repo.",
+      "additionalProperties": false,
+      "properties": {
+        "dir": {
+          "type": "string",
+          "description": "Local directory (relative to the configuration file) that is zipped and uploaded to bucket."
+        },
+        "zip": {
+          "type": "string",
+          "description": "Local .zip file (relative to the configuration file) that is uploaded to bucket."
+        },
+        "excludes": {
+          "type": "array",
+          "description": "Glob patterns of files in dir to leave out of the archive.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "bucket": {
+          "type": "string",
+          "description": "Cloud Storage bucket for uploads (dir, zip) or holding the existing object. Name only, without gs://."
+        },
+        "object_prefix": {
+          "type": "string",
+          "description": "Prefix for uploaded object names, e.g. functions/."
+        },
+        "object": {
+          "type": "string",
+          "description": "Existing object in bucket that holds the zipped source."
+        },
+        "generation": {
+          "description": "Generation of object to deploy (default: latest).",
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "$ref": "#/definitions/template_placeholder"
+            }
+          ]
+        },
+        "repo": {
+          "$ref": "#/definitions/repo_source"
+        }
+      }
+    },
+    "repo_source": {
+      "type": "object",
+      "description": "Cloud Source Repositories source. Set one of branch_name, tag_name and commit_sha.",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "description": "Project of the repository (default: the function's project)."
+        },
+        "repo_name": {
+          "type": "string",
+          "description": "Repository name."
+        },
+        "branch_name": {
+          "type": "string",
+          "description": "Branch regex."
+        },
+        "tag_name": {
+          "type": "string",
+          "description": "Tag regex."
+        },
+        "commit_sha": {
+          "type": "string",
+          "description": "Commit SHA."
+        },
+        "dir": {
+          "type": "string",
+          "description": "Directory in the repository that holds the source."
+        },
+        "invert_regex": {
+          "description": "Match everything except branch_name / tag_name.",
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/definitions/template_placeholder"
+            }
+          ]
+        }
+      },
+      "required": [
+        "repo_name"
+      ]
+    },
+    "service_config": {
+      "type": "object",
+      "description": "How the function runs.",
+      "additionalProperties": false,
+      "properties": {
+        "available_memory": {
+          "type": "string",
+          "description": "Memory per instance, e.g. 256M, 512Mi, 1Gi, 4G."
+        },
+        "available_cpu": {
+          "type": "string",
+          "description": "CPUs per instance, e.g. \"1\", \"2\", \"0.583\" (default: derived from memory)."
+        },
+        "timeout_seconds": {
+          "description": "Request timeout in seconds (HTTP functions up to 3600, event-driven functions up to 540).",
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3600
+            },
+            {
+              "$ref": "#/definitions/template_placeholder"
+            }
+          ]
+        },
+        "min_instance_count": {
+          "description": "Instances kept warm.",
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "$ref": "#/definitions/template_placeholder"
+            }
+          ]
+        },
+        "max_instance_count": {
+          "description": "Upper bound of instances.",
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "$ref": "#/definitions/template_placeholder"
+            }
+          ]
+        },
+        "max_instance_request_concurrency": {
+          "description": "Concurrent requests per instance (needs at least 1 CPU when above 1).",
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            {
+              "$ref": "#/definitions/template_placeholder"
+            }
+          ]
+        },
+        "environment_variables": {
+          "description": "Runtime environment variables.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/env_vars"
+            }
+          ]
+        },
+        "ingress_settings": {
+          "description": "Which traffic may reach the function.",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "ALLOW_ALL",
+                "ALLOW_INTERNAL_ONLY",
+                "ALLOW_INTERNAL_AND_GCLB"
+              ]
+            },
+            {
+              "$ref": "#/definitions/template_placeholder"
+            }
+          ]
+        },
+        "all_traffic_on_latest_revision": {
+          "description": "Route all traffic to the latest revision (default true).",
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/definitions/template_placeholder"
+            }
+          ]
+        },
+        "service_account_email": {
+          "type": "string",
+          "description": "Runtime service account (default: the Compute Engine default service account)."
+        },
+        "vpc_connector": {
+          "type": "string",
+          "description": "Serverless VPC Access connector (projects/P/locations/R/connectors/C)."
+        },
+        "vpc_connector_egress_settings": {
+          "description": "Which egress goes through the connector.",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "VPC_CONNECTOR_EGRESS_SETTINGS_UNSPECIFIED",
+                "PRIVATE_RANGES_ONLY",
+                "ALL_TRAFFIC"
+              ]
+            },
+            {
+              "$ref": "#/definitions/template_placeholder"
+            }
+          ]
+        },
+        "direct_vpc_egress": {
+          "description": "Which egress goes through Direct VPC.",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "VPC_EGRESS_ALL_TRAFFIC",
+                "VPC_EGRESS_PRIVATE_RANGES_ONLY"
+              ]
+            },
+            {
+              "$ref": "#/definitions/template_placeholder"
+            }
+          ]
+        },
+        "direct_vpc_network_interface": {
+          "type": "array",
+          "description": "Direct VPC egress network interfaces (instead of a connector).",
+          "items": {
+            "$ref": "#/definitions/direct_vpc_network_interface"
+          }
+        },
+        "binary_authorization_policy": {
+          "type": "string",
+          "description": "Binary Authorization policy checked on deployment, e.g. default."
+        },
+        "secret_environment_variables": {
+          "type": "array",
+          "description": "Secret Manager secrets exposed as environment variables.",
+          "items": {
+            "$ref": "#/definitions/secret_environment_variable"
+          }
+        },
+        "secret_volumes": {
+          "type": "array",
+          "description": "Secret Manager secrets mounted as files.",
+          "items": {
+            "$ref": "#/definitions/secret_volume"
+          }
+        }
+      }
+    },
+    "direct_vpc_network_interface": {
+      "type": "object",
+      "description": "A Direct VPC network interface.",
+      "additionalProperties": false,
+      "properties": {
+        "network": {
+          "type": "string",
+          "description": "VPC network name or self link."
+        },
+        "subnetwork": {
+          "type": "string",
+          "description": "Subnetwork name or self link."
+        },
+        "tags": {
+          "type": "array",
+          "description": "Network tags.",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "secret_environment_variable": {
+      "type": "object",
+      "description": "A secret exposed as an environment variable.",
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "Environment variable name."
+        },
+        "secret": {
+          "type": "string",
+          "description": "Secret ID (name) in Secret Manager."
+        },
+        "version": {
+          "type": "string",
+          "description": "Secret version (default latest)."
+        },
+        "project_id": {
+          "type": "string",
+          "description": "Project of the secret (default: the function's project)."
+        }
+      },
+      "required": [
+        "key",
+        "secret"
+      ]
+    },
+    "secret_volume": {
+      "type": "object",
+      "description": "A secret mounted as files.",
+      "additionalProperties": false,
+      "properties": {
+        "mount_path": {
+          "type": "string",
+          "description": "Directory the secret is mounted at, e.g. /etc/secrets."
+        },
+        "secret": {
+          "type": "string",
+          "description": "Secret ID (name) in Secret Manager."
+        },
+        "project_id": {
+          "type": "string",
+          "description": "Project of the secret (default: the function's project)."
+        },
+        "versions": {
+          "type": "array",
+          "description": "Versions to mount and their file names (default: latest, named after the secret).",
+          "items": {
+            "$ref": "#/definitions/secret_volume_version"
+          }
+        }
+      },
+      "required": [
+        "mount_path",
+        "secret"
+      ]
+    },
+    "secret_volume_version": {
+      "type": "object",
+      "description": "A secret version mounted as a file.",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "File name relative to mount_path."
+        },
+        "version": {
+          "type": "string",
+          "description": "Secret version, e.g. latest or 3."
+        }
+      },
+      "required": [
+        "path",
+        "version"
+      ]
+    },
+    "event_trigger": {
+      "type": "object",
+      "description": "Makes the function event-driven (Eventarc). Without it the function is an HTTP function.",
+      "additionalProperties": false,
+      "properties": {
+        "event_type": {
+          "type": "string",
+          "description": "Event type, e.g. google.cloud.storage.object.v1.finalized (default with pubsub_topic: google.cloud.pubsub.topic.v1.messagePublished)."
+        },
+        "pubsub_topic": {
+          "type": "string",
+          "description": "Pub/Sub topic: a short name (in the function's project) or projects/P/topics/T."
+        },
+        "trigger_region": {
+          "type": "string",
+          "description": "Region of the trigger (default: the function's region). Must match the location of e.g. the bucket for storage events."
+        },
+        "retry_policy": {
+          "description": "Whether failed executions are retried.",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "RETRY_POLICY_RETRY",
+                "RETRY_POLICY_DO_NOT_RETRY",
+                "RETRY_POLICY_UNSPECIFIED"
+              ]
+            },
+            {
+              "$ref": "#/definitions/template_placeholder"
+            }
+          ]
+        },
+        "service_account_email": {
+          "type": "string",
+          "description": "Service account the trigger uses to invoke the function. Grant it roles/run.invoker via invokers."
+        },
+        "event_filters": {
+          "type": "array",
+          "description": "Filters on event attributes, e.g. bucket for storage events.",
+          "items": {
+            "$ref": "#/definitions/event_filter"
+          }
+        }
+      }
+    },
+    "event_filter": {
+      "type": "object",
+      "description": "Matches an event attribute.",
+      "additionalProperties": false,
+      "properties": {
+        "attribute": {
+          "type": "string",
+          "description": "Attribute name, e.g. bucket, serviceName, methodName, database, document."
+        },
+        "value": {
+          "type": "string",
+          "description": "Attribute value (a path pattern with operator match-path-pattern)."
+        },
+        "operator": {
+          "description": "Set to match-path-pattern for path patterns such as users/{userId}.",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "match-path-pattern"
+              ]
+            },
+            {
+              "$ref": "#/definitions/template_placeholder"
+            }
+          ]
+        }
+      },
+      "required": [
+        "attribute",
+        "value"
+      ]
+    }
+  }
+}

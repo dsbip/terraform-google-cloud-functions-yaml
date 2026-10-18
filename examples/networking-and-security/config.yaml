@@ -1,0 +1,99 @@
+# yaml-language-server: $schema=../../schemas/cloud-functions-config.schema.json
+#
+# Networking and security settings:
+#   - Serverless VPC Access connector vs. Direct VPC egress
+#   - ingress restricted to internal traffic and the load balancer
+#   - customer-managed encryption keys (CMEK) with a dedicated Artifact
+#     Registry repository
+#   - secrets as environment variables and as mounted files, pinned versions,
+#     secrets from another project
+#   - Binary Authorization, a private Cloud Build worker pool and a dedicated
+#     build service account
+#   - IAM with a condition, and deletion protection
+
+project_id: ${project_id}
+
+defaults:
+  region: europe-west3
+  labels:
+    data-classification: confidential
+  functions:
+    kms_key_name: projects/${project_id}/locations/europe-west3/keyRings/functions/cryptoKeys/functions
+    deletion_policy: PREVENT
+    build_config:
+      runtime: python312
+      entry_point: handler
+      docker_repository: projects/${project_id}/locations/europe-west3/repositories/functions-cmek
+      service_account: projects/${project_id}/serviceAccounts/fn-builder@${project_id}.iam.gserviceaccount.com
+      worker_pool: projects/${project_id}/locations/europe-west3/workerPools/private-pool
+      source:
+        bucket: ${project_id}-fn-sources-eu
+    service_config:
+      ingress_settings: ALLOW_INTERNAL_AND_GCLB
+      binary_authorization_policy: default
+
+functions:
+  # Reaches a Cloud SQL private IP through a Serverless VPC Access connector;
+  # all egress goes through the VPC (and so through Cloud NAT and firewalls).
+  ledger:
+    description: Writes ledger entries to the private database.
+    build_config:
+      source: { dir: src/ledger }
+    service_config:
+      service_account_email: ledger@${project_id}.iam.gserviceaccount.com
+      vpc_connector: projects/${project_id}/locations/europe-west3/connectors/serverless-eu
+      vpc_connector_egress_settings: ALL_TRAFFIC
+      secret_environment_variables:
+        - key: DB_PASSWORD
+          secret: ledger-db-password
+          version: "7"                  # pinned version
+        - key: SIGNING_KEY
+          secret: ledger-signing-key
+          project_id: security-shared   # secret owned by another project
+      secret_volumes:
+        - mount_path: /etc/ledger-tls
+          secret: ledger-tls
+          versions:
+            - { path: cert.pem, version: latest }
+            - { path: previous-cert.pem, version: "3" }
+
+  # Direct VPC egress (no connector): the function gets an interface in the
+  # subnet; only private ranges are routed into the VPC.
+  payments-webhook:
+    description: Receives payment provider webhooks behind the load balancer.
+    build_config:
+      source: { dir: src/payments-webhook }
+    service_config:
+      service_account_email: payments@${project_id}.iam.gserviceaccount.com
+      available_memory: 512M
+      direct_vpc_network_interface:
+        - network: projects/${project_id}/global/networks/prod-vpc
+          subnetwork: projects/${project_id}/regions/europe-west3/subnetworks/serverless
+          tags: [payments, egress-psp]
+      direct_vpc_egress: VPC_EGRESS_PRIVATE_RANGES_ONLY
+      secret_volumes:
+        - mount_path: /secrets/webhook
+          secret: psp-webhook-secret     # mounted as /secrets/webhook/psp-webhook-secret
+    invokers: [allUsers]                 # the load balancer forwards unauthenticated calls
+
+  # Internal only; invokable by one service account, and only during the
+  # migration window thanks to the IAM condition.
+  internal-proxy:
+    description: Temporary proxy used during the data migration.
+    deletion_policy: DELETE              # overrides the PREVENT default
+    build_config:
+      source: { dir: src/internal-proxy }
+    service_config:
+      ingress_settings: ALLOW_INTERNAL_ONLY
+      direct_vpc_network_interface:
+        - subnetwork: projects/${project_id}/regions/europe-west3/subnetworks/serverless
+      direct_vpc_egress: VPC_EGRESS_ALL_TRAFFIC
+    invokers:
+      - serviceAccount:migrator@${project_id}.iam.gserviceaccount.com
+    iam:
+      - role: roles/cloudfunctions.developer
+        members: [group:migration-team@example.com]
+        condition:
+          title: until-end-of-migration
+          description: Access ends when the migration window closes.
+          expression: request.time < timestamp("2027-01-31T00:00:00Z")

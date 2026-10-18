@@ -1,0 +1,50 @@
+# Live-test fixture: deployed by tests/python/test_live.py into a real project.
+# Every name starts with cfyaml-<suffix>; revision changes descriptions and an
+# environment variable to exercise in-place updates.
+
+defaults:
+  labels:
+    purpose: terraform-module-test
+    run: ${suffix}
+  functions:
+    build_config:
+      runtime: python312
+      source:
+        bucket: ${bucket}
+        object_prefix: live/
+      runtime_update_policy: AUTOMATIC
+    service_config:
+      available_memory: 256M
+      max_instance_count: 1
+      timeout_seconds: 60
+      environment_variables:
+        REVISION: "${revision}"
+
+functions:
+  http:
+    name: cfyaml-${suffix}-http
+    description: Live test HTTP function, revision ${revision}
+    build_config:
+      entry_point: hello
+      source:
+        dir: src/http
+%{ if test_member != "" ~}
+    invokers:
+      - ${test_member}
+    iam:
+      - role: roles/cloudfunctions.viewer
+        members: ["${test_member}"]
+%{ endif ~}
+
+  events:
+    name: cfyaml-${suffix}-events
+    description: Live test Pub/Sub function, revision ${revision}
+    build_config:
+      entry_point: on_event
+      source:
+        dir: src/events
+    service_config:
+      ingress_settings: ALLOW_INTERNAL_ONLY
+    event_trigger:
+      pubsub_topic: ${topic}
+      retry_policy: RETRY_POLICY_DO_NOT_RETRY

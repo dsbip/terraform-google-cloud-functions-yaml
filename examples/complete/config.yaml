@@ -1,0 +1,195 @@
+# yaml-language-server: $schema=../../schemas/cloud-functions-config.schema.json
+#
+# Complete example: every configuration key the module supports, across eight
+# functions (one disabled). Read it next to docs/functions.md;
+# tests/python/test_schema.py checks that no key is missing here.
+
+project_id: ${project_id}
+
+defaults:
+  region: us-central1
+  labels:
+    app: shop
+    owner: platform
+  functions:
+    labels:
+      tier: standard
+    build_config:
+      runtime: python312
+      entry_point: handler
+      runtime_update_policy: AUTOMATIC
+      source:
+        bucket: ${project_id}-fn-sources
+        object_prefix: complete/
+        excludes: [tests/**, "**/__pycache__/**"]
+      environment_variables:
+        PIP_INDEX_URL: https://us-python.pkg.dev/${project_id}/pypi-remote/simple/
+    service_config:
+      available_memory: 512M
+      timeout_seconds: 60
+      max_instance_count: 20
+      service_account_email: shop-functions@${project_id}.iam.gserviceaccount.com
+      all_traffic_on_latest_revision: true
+      environment_variables:
+        LOG_LEVEL: info
+        PROJECT_ID: ${project_id}
+
+functions:
+  # HTTP, public, every service_config setting that is not networking.
+  checkout:
+    name: shop-checkout                 # differs from the key
+    description: Checkout endpoint.
+    labels:
+      tier: critical                    # overrides the defaults.functions label
+    build_config:
+      source:
+        dir: src/checkout               # tests/** is excluded (defaults)
+    service_config:
+      available_memory: 2Gi
+      available_cpu: "2"
+      timeout_seconds: 300
+      min_instance_count: 1
+      max_instance_count: 100
+      max_instance_request_concurrency: 80
+      environment_variables:
+        PAYMENT_PROVIDER: stripe        # merged with LOG_LEVEL and PROJECT_ID
+      secret_environment_variables:
+        - { key: STRIPE_KEY, secret: stripe-api-key }
+        - { key: WEBHOOK_SECRET, secret: stripe-webhook, version: "2" }
+        - { key: FRAUD_API_KEY, secret: fraud-api-key, project_id: shared-secrets }
+    invokers: [allUsers]
+    iam:
+      - role: roles/cloudfunctions.viewer
+        members: [group:support@example.com, group:sre@example.com]
+
+  # Pub/Sub with every event_trigger key, Direct VPC egress, secret volume.
+  inventory-sync:
+    description: Syncs inventory updates into the warehouse system.
+    region: us-east1                    # overrides defaults.region
+    build_config:
+      source:
+        dir: src/inventory-sync
+    service_config:
+      ingress_settings: ALLOW_INTERNAL_ONLY
+      direct_vpc_network_interface:
+        - network: shop-vpc
+          subnetwork: shop-serverless-east
+          tags: [inventory]
+      direct_vpc_egress: VPC_EGRESS_ALL_TRAFFIC
+      secret_volumes:
+        - mount_path: /secrets/warehouse
+          secret: warehouse-credentials
+          project_id: shared-secrets
+          versions:
+            - { path: credentials.json, version: latest }
+    event_trigger:
+      pubsub_topic: inventory-updates
+      trigger_region: us-east1
+      retry_policy: RETRY_POLICY_RETRY
+      service_account_email: shop-events@${project_id}.iam.gserviceaccount.com
+    invokers:
+      - serviceAccount:shop-events@${project_id}.iam.gserviceaccount.com
+
+  # Cloud Storage trigger, VPC connector, CMEK, private build, Binary
+  # Authorization, deletion protection.
+  webhooks:
+    description: Processes webhook payloads dropped into the inbox bucket.
+    kms_key_name: projects/${project_id}/locations/us-central1/keyRings/shop/cryptoKeys/functions
+    deletion_policy: PREVENT
+    build_config:
+      source:
+        dir: src/webhooks
+      docker_repository: projects/${project_id}/locations/us-central1/repositories/functions-cmek
+      service_account: projects/${project_id}/serviceAccounts/builder@${project_id}.iam.gserviceaccount.com
+      worker_pool: projects/${project_id}/locations/us-central1/workerPools/private
+    service_config:
+      vpc_connector: projects/${project_id}/locations/us-central1/connectors/shop
+      vpc_connector_egress_settings: PRIVATE_RANGES_ONLY
+      binary_authorization_policy: default
+    event_trigger:
+      event_type: google.cloud.storage.object.v1.finalized
+      event_filters:
+        - { attribute: bucket, value: "${project_id}-webhook-inbox" }
+      service_account_email: shop-events@${project_id}.iam.gserviceaccount.com
+    invokers:
+      - serviceAccount:shop-events@${project_id}.iam.gserviceaccount.com
+
+  # Prebuilt local zip, Node.js, ON_DEPLOY updates, conditional IAM.
+  receipts:
+    description: Renders receipts.
+    build_config:
+      runtime: nodejs22
+      entry_point: render
+      runtime_update_policy: ON_DEPLOY
+      environment_variables:
+        NPM_CONFIG_REGISTRY: https://us-npm.pkg.dev/${project_id}/npm-remote/   # added to PIP_INDEX_URL
+      source:
+        zip: dist/receipts.zip
+    invokers: ["serviceAccount:checkout@${project_id}.iam.gserviceaccount.com"]
+    iam:
+      - role: roles/cloudfunctions.invoker
+        members: [user:auditor@example.com]
+        condition:
+          title: q4-audit
+          description: Read access for the Q4 audit.
+          expression: request.time < timestamp("2027-01-15T00:00:00Z")
+
+  # Existing object pinned to a generation, in another project.
+  tax-rates:
+    project_id: shop-shared-services     # overrides the top-level project_id
+    description: Tax rate lookup.
+    build_config:
+      source:
+        object: releases/tax-rates-1.4.0.zip
+        generation: 1767225600000000
+    invokers: ["serviceAccount:checkout@${project_id}.iam.gserviceaccount.com"]
+
+  # Cloud Source Repositories, scheduled through Pub/Sub, no retries.
+  cleanup:
+    description: Nightly cleanup, triggered by Cloud Scheduler through Pub/Sub.
+    build_config:
+      source:
+        repo:
+          repo_name: shop-functions
+          commit_sha: 4f1c2a9e0b7d3c5a8e6f1b2d9c0a7e3f5b8d1c4a
+          dir: cleanup
+          invert_regex: false
+    service_config:
+      timeout_seconds: 540
+    event_trigger:
+      pubsub_topic: nightly-cleanup
+      retry_policy: RETRY_POLICY_DO_NOT_RETRY
+      service_account_email: shop-events@${project_id}.iam.gserviceaccount.com
+    invokers:
+      - serviceAccount:shop-events@${project_id}.iam.gserviceaccount.com
+
+  # Firestore trigger with a path pattern, built from a repository tag.
+  user-events:
+    description: Reacts to changes of user documents.
+    build_config:
+      source:
+        repo:
+          repo_name: shop-functions
+          tag_name: ^user-events-v1\.
+          dir: user-events
+    event_trigger:
+      event_type: google.cloud.firestore.document.v1.written
+      event_filters:
+        - { attribute: database, value: (default) }
+        - { attribute: document, value: "users/{userId}", operator: match-path-pattern }
+      service_account_email: shop-events@${project_id}.iam.gserviceaccount.com
+    invokers:
+      - serviceAccount:shop-events@${project_id}.iam.gserviceaccount.com
+
+  # Kept in the file (and validated) but switched off. Its source is a branch
+  # of a repository in another project.
+  legacy-checkout:
+    enabled: false
+    description: Retired; kept for reference.
+    build_config:
+      source:
+        repo:
+          project_id: shop-legacy
+          repo_name: monolith
+          branch_name: ^release/.*$
+          dir: functions/checkout

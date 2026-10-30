@@ -1,0 +1,89 @@
+# yaml-language-server: $schema=../../modules/dataflow/schemas/dataflow-config.schema.json
+#
+# Dataflow jobs and Data Pipelines of the DEV environment.
+# Deployed by terraform/infra/dataflow.tf through modules/dataflow; this file
+# is selected by dataflow_yaml_config_path in variables.tfvars.
+#
+# - jobs: streaming jobs. terraform apply launches them and they keep running.
+#   A batch job would be launched again by every apply (the provider drops
+#   finished jobs from the state), and the pipeline applies on every merge.
+# - pipelines: recurring batch work. Cloud Scheduler launches a new job on
+#   each schedule, independent of Terraform runs.
+# - Each key is the job name or pipeline ID and part of its Terraform address,
+#   so renaming a key replaces the job or pipeline.
+# - The plan checks the whole file first, disabled entries included, and lists
+#   every problem with its path, e.g. defaults.jobs: unknown key "machine".
+# - Service accounts, buckets, subscriptions and tables named here must
+#   already exist (sa.yaml, gcs.yaml, iam-bindings.yaml, bq.yaml).
+# - The file is rendered with templatefile(): a literal dollar sign followed by
+#   an opening brace must be written as $${ (see docs/configuration.md).
+# - All keys: modules/dataflow/docs/jobs.md and pipelines.md
+#
+# Every entry starts with enabled: false, so the file can be planned as it is.
+# Replace every REPLACE-ME, then set enabled: true on the entries you want.
+
+project_id: REPLACE-ME-dev-project-id
+
+defaults:
+  region: europe-west2
+  labels:
+    environment: dev
+    managed-by: terraform
+
+  # Worker settings of every job and pipeline. &workers is merged into the
+  # pipeline defaults below, so they are written once.
+  jobs: &workers
+    service_account_email: dataflow-worker@REPLACE-ME-dev-project-id.iam.gserviceaccount.com
+    temp_location: gs://REPLACE-ME-dev-dataflow-bucket/tmp
+    # With Shared VPC, the full URL:
+    # https://www.googleapis.com/compute/v1/projects/HOST_PROJECT/regions/europe-west2/subnetworks/NAME
+    subnetwork: regions/europe-west2/subnetworks/REPLACE-ME-subnetwork
+    ip_configuration: WORKER_IP_PRIVATE     # needs Private Google Access on the subnetwork
+    machine_type: e2-standard-2
+    max_workers: 2
+
+  pipelines:
+    <<: *workers
+    scheduler_service_account_email: dataflow-scheduler@REPLACE-ME-dev-project-id.iam.gserviceaccount.com
+    time_zone: Europe/London
+
+jobs:
+  # Streaming: Pub/Sub subscription to BigQuery, from a Google-provided Flex
+  # Template. Runs until the entry is removed (or disabled).
+  events-to-bigquery:
+    enabled: false
+    google_template:
+      name: PubSub_to_BigQuery_Flex
+    parameters:
+      inputSubscription: projects/REPLACE-ME-dev-project-id/subscriptions/REPLACE-ME-subscription
+      outputTableSpec: REPLACE-ME-dev-project-id:REPLACE-ME-dataset.events
+      outputDeadletterTable: REPLACE-ME-dev-project-id:REPLACE-ME-dataset.events_deadletter
+    staging_location: gs://REPLACE-ME-dev-dataflow-bucket/staging
+    enable_streaming_engine: true
+    on_delete: cancel                       # dev: a destroy doesn't wait for a drain
+
+pipelines:
+  # Batch, daily at 02:00: newline-delimited JSON files to BigQuery, from a
+  # Google-provided Flex Template.
+  daily-files-to-bigquery:
+    enabled: false
+    schedule: "0 2 * * *"
+    google_template:
+      name: GCS_Text_to_BigQuery_Flex
+    parameters:
+      inputFilePattern: gs://REPLACE-ME-dev-landing-bucket/daily/*.json
+      JSONPath: gs://REPLACE-ME-dev-dataflow-bucket/schemas/daily.json
+      outputTable: REPLACE-ME-dev-project-id:REPLACE-ME-dataset.daily
+      bigQueryLoadingTemporaryDirectory: gs://REPLACE-ME-dev-dataflow-bucket/bq-tmp
+
+  # Batch, nightly at 01:30: your own Flex Template, i.e. the spec file that
+  # gcloud dataflow flex-template build wrote. Created paused: state: ACTIVE
+  # starts the schedule.
+  nightly-orders-transform:
+    enabled: false
+    schedule: "30 1 * * *"
+    state: PAUSED
+    container_spec_gcs_path: gs://REPLACE-ME-dev-dataflow-bucket/templates/orders-transform.json
+    parameters:
+      input_table: REPLACE-ME-dev-project-id:REPLACE-ME-dataset.orders
+      output_table: REPLACE-ME-dev-project-id:REPLACE-ME-dataset.orders_curated

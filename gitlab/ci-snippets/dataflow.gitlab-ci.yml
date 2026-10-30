@@ -1,0 +1,57 @@
+# =============================================================================
+# Dataflow additions for the GitLab pipeline of the repository.
+#
+# A reference to merge into the existing Terraform pipeline (.gitlab-ci.yml or
+# the files it includes). Every job here is hidden (its name starts with "."),
+# so including this file changes nothing until a job extends one of them.
+#
+#   1. Runners: Terraform >= 1.5; the whole terraform/infra root on google and
+#      google-beta providers >= 7.42, < 9.0, both downloadable or mirrored.
+#   2. Changes to the module or to a dataflow.yaml must start the Terraform jobs.
+#   3. Optional: schema check of every dataflow.yaml.
+#
+# Details: gitlab/DATAFLOW-SETUP.md, section "GitLab pipeline".
+# =============================================================================
+
+# --- 1. The google-beta provider ----------------------------------------------
+# Flex Template jobs use hashicorp/google-beta. If the runners install providers
+# from a mirror (Artifactory, or a provider_installation block in the runner's
+# CLI configuration), it has to be in the mirror, in the same version as google.
+# If terraform/infra/.terraform.lock.hcl is committed, run `terraform init`
+# once and commit the result, or
+# `terraform providers lock -platform=linux_amd64 -platform=windows_amd64` to
+# cover Windows laptops too. A pipeline that runs
+# `terraform init -lockfile=readonly` fails until then.
+
+# --- 2. Paths that must start the plan and apply jobs -------------------------
+# If the Terraform jobs have `changes:` rules, they must cover the module and
+# every environment's dataflow.yaml, e.g.
+#
+#   rules:
+#     - changes:
+#         - terraform/**/*
+#         - modules/**/*
+#
+# A saved plan needs no extra artifacts: the Dataflow module writes no files
+# during the plan.
+
+# --- 3. Schema check of every dataflow.yaml, without Google Cloud access ------
+# Finds unknown keys, wrong types and invalid values in all environments at
+# once, before any plan. The plan's own validation also checks the rules the
+# schema can't express (exactly one template, settings of the other template
+# type, batch-only settings, duplicate names) and stays the authority. Skip
+# this job if a dataflow.yaml uses percent-brace templatefile() directives
+# (not YAML before rendering).
+#
+#   dataflow:validate-yaml:
+#     extends: .dataflow:validate-yaml
+#     stage: validate
+.dataflow:validate-yaml:
+  image: python:3.12-slim   # use your registry's mirror if Docker Hub is blocked
+  rules:
+    - changes:
+        - terraform/*/dataflow.yaml
+        - modules/dataflow/schemas/*
+  script:
+    - pip install --quiet check-jsonschema
+    - check-jsonschema --schemafile modules/dataflow/schemas/dataflow-config.schema.json terraform/*/dataflow.yaml

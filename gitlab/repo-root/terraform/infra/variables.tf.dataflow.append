@@ -1,0 +1,11 @@
+
+variable "dataflow_yaml_config_path" {
+  description = "Dataflow YAML of the environment, relative to terraform/infra (e.g. ../dev/dataflow.yaml). Leave unset to deploy no Dataflow jobs or pipelines."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.dataflow_yaml_config_path == null || try(fileexists(var.dataflow_yaml_config_path), false)
+    error_message = "The dataflow_yaml_config_path variable must point to an existing file, relative to terraform/infra (e.g. ../dev/dataflow.yaml)."
+  }
+}

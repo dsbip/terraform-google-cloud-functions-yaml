@@ -1,0 +1,7 @@
+
+# Dataflow: Flex Template jobs use the google-beta provider. Give it the same
+# arguments as provider "google" (project, region, impersonation, credentials)
+# so that both providers act as the same identity.
+provider "google-beta" {
+  # impersonate_service_account = "..."
+}

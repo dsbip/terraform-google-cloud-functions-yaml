@@ -1,0 +1,3 @@
+
+# Cloud Functions of this environment (see cf.yaml)
+cf_yaml_config_path = "../dev/cf.yaml"

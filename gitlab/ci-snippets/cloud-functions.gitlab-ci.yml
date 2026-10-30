@@ -1,0 +1,83 @@
+# =============================================================================
+# Cloud Functions additions for your GitLab pipeline.
+#
+# A reference to merge into the existing Terraform pipeline (.gitlab-ci.yml or
+# the files it includes). Every job here is hidden (its name starts with "."),
+# so including this file changes nothing until a job extends one of them.
+#
+#   1. Runners: Terraform >= 1.5; the whole terraform/infra root on google
+#      provider >= 7.42, < 9.0; hashicorp/archive downloadable or mirrored.
+#   2. Code-only changes under src/cloud-functions/ must start the Terraform jobs.
+#   3. A saved plan applied in a later job needs the zips the plan wrote.
+#   4. Optional: unit tests of function code, schema check of every cf.yaml.
+#
+# Details: gitlab/CLOUD-FUNCTIONS-SETUP.md, section "GitLab pipeline".
+# =============================================================================
+
+# --- 2. Paths that must start the plan and apply jobs -------------------------
+# Add src/cloud-functions/**/* (and modules/**/* if it is missing) to the
+# `changes:` of every rule that starts the Terraform jobs, e.g.
+#
+#   rules:
+#     - changes:
+#         - terraform/**/*
+#         - modules/**/*
+#         - src/cloud-functions/**/*
+
+# --- 3. Plan job artifacts ----------------------------------------------------
+# `terraform plan -out=<file>` refers to the archives it wrote to
+# terraform/infra/.terraform/cloud-functions-yaml/, and `terraform apply <file>`
+# uploads them from there. Add that directory to the plan job's artifacts, next
+# to the plan file. (Add the line to the existing list: `extends` would replace
+# the job's artifacts:paths instead of adding to it.)
+#
+#   artifacts:
+#     paths:
+#       - terraform/infra/<plan file>
+#       - terraform/infra/.terraform/cloud-functions-yaml/
+#
+# A job that plans and applies in one go (terraform apply without a plan file)
+# needs nothing.
+
+# --- 4a. Unit tests of every function that has a tests/ folder ----------------
+# Each function gets its own virtualenv, so their requirements can't clash.
+# Use it with a stage your pipeline has:
+#
+#   cloud-functions:unit-tests:
+#     extends: .cloud-functions:unit-tests
+#     stage: test
+.cloud-functions:unit-tests:
+  image: python:3.12-slim   # the runtime in cf.yaml (python312); use your registry's mirror if Docker Hub is blocked
+  rules:
+    - changes:
+        - src/cloud-functions/**/*
+  script:
+    - |
+      set -eu
+      for dir in src/cloud-functions/*/; do
+        [ -d "${dir}tests" ] || continue
+        echo "==> ${dir}"
+        rm -rf /tmp/venv
+        python -m venv /tmp/venv
+        /tmp/venv/bin/pip install --quiet -r "${dir}requirements.txt" pytest
+        (cd "$dir" && /tmp/venv/bin/python -m pytest tests -q)
+      done
+
+# --- 4b. Schema check of every cf.yaml, without Google Cloud access -----------
+# Finds unknown keys, wrong types and invalid values in all environments at
+# once, before any plan. The plan's own validation also checks cross-field
+# rules and source folders, and stays the authority. Skip this job if cf.yaml
+# files use percent-brace templatefile() directives (not YAML before rendering).
+#
+#   cloud-functions:validate-yaml:
+#     extends: .cloud-functions:validate-yaml
+#     stage: validate
+.cloud-functions:validate-yaml:
+  image: python:3.12-slim
+  rules:
+    - changes:
+        - terraform/*/cf.yaml
+        - modules/cloud-functions/schemas/*
+  script:
+    - pip install --quiet check-jsonschema
+    - check-jsonschema --schemafile modules/cloud-functions/schemas/cloud-functions-config.schema.json terraform/*/cf.yaml

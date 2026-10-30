@@ -1,0 +1,6 @@
+
+variable "cf_yaml_config_path" {
+  description = "Cloud Functions YAML of the environment, relative to terraform/infra (e.g. ../dev/cf.yaml). Leave unset to deploy no functions."
+  type        = string
+  default     = null
+}

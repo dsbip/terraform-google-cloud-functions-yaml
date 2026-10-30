@@ -1,0 +1,133 @@
+# yaml-language-server: $schema=../../modules/cloud-functions/schemas/cloud-functions-config.schema.json
+#
+# Cloud Run functions (Cloud Functions 2nd gen) of the DEV environment.
+# Deployed by terraform/infra/cloud-functions.tf through modules/cloud-functions;
+# this file is selected by cf_yaml_config_path in variables.tfvars.
+#
+# - Each entry under `functions` is one function. Its key is the function's
+#   name in Google Cloud and part of its Terraform address, so renaming a key
+#   replaces the function.
+# - source.dir names a folder under src/cloud-functions/ (the code is shared by
+#   every environment).
+# - The plan checks the whole file first and lists every problem with its
+#   path, e.g. functions.smoke-test.service_config: unknown key "memory".
+# - Service accounts, buckets, topics and secrets named here must already
+#   exist (sa.yaml, gcs.yaml, iam-bindings.yaml).
+# - The file is rendered with templatefile(): a literal dollar sign followed by
+#   an opening brace must be written as $${ (see docs/configuration.md).
+# - All keys: modules/cloud-functions/docs/functions.md
+#
+# Replace every REPLACE-ME before the first plan.
+
+project_id: REPLACE-ME-dev-project-id
+
+defaults:
+  region: europe-west2                    # region of the other dev resources
+  labels:
+    app: REPLACE-ME-app-id
+    environment: dev
+    managed-by: terraform
+
+  # Merged underneath every function, three levels deep. A function's own value
+  # wins; lists (excludes, invokers, ...) are replaced, not combined.
+  functions:
+    build_config:
+      runtime: python312
+      runtime_update_policy: AUTOMATIC    # base-image security patches without a redeploy
+      # The identity Cloud Build runs as. Without it the build uses the
+      # project's default build service account, which organization policies
+      # often leave without the roles it needs.
+      service_account: projects/REPLACE-ME-dev-project-id/serviceAccounts/cf-build@REPLACE-ME-dev-project-id.iam.gserviceaccount.com
+      source:
+        bucket: REPLACE-ME-dev-cf-sources # existing bucket the zipped code is uploaded to
+        object_prefix: cloud-functions/
+        excludes:                         # never deployed
+          - "tests/**"
+          - "**/__pycache__/**"
+          - ".pytest_cache/**"
+          - ".venv/**"
+    service_config:
+      service_account_email: cf-runtime@REPLACE-ME-dev-project-id.iam.gserviceaccount.com
+      available_memory: 256M
+      timeout_seconds: 60
+      max_instance_count: 3
+      ingress_settings: ALLOW_INTERNAL_ONLY   # events from this project (Pub/Sub, Eventarc) still get through
+      environment_variables:
+        ENVIRONMENT: dev
+
+functions:
+  # Deploy this first: a successful call proves the bucket, the build, the
+  # service accounts, the invoker grant and the pipeline. Then delete it (here
+  # and in src/cloud-functions/) or keep it as a health check. Call it with
+  #   curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" <uri>
+  # where <uri> is in the pipeline output (cloud_function_uris).
+  smoke-test:
+    description: Returns 200 and the environment name.
+    build_config:
+      entry_point: smoke_test
+      source: { dir: smoke-test }
+    service_config:
+      ingress_settings: ALLOW_ALL         # callable from a laptop, still only by invokers
+      max_instance_count: 1
+    invokers:
+      - group:REPLACE-ME-developers@example.com
+
+  # ---------------------------------------------------------------------------
+  # Patterns for common kinds of functions. To use one, uncomment it, put the
+  # code in src/cloud-functions/<dir>/ and replace the REPLACE-ME values.
+  # ---------------------------------------------------------------------------
+
+  # A file lands in a bucket -> the function runs (e.g. loads it into BigQuery).
+  # Needs: cf-trigger with roles/eventarc.eventReceiver on the project; the
+  # Cloud Storage service agent with roles/pubsub.publisher; cf-runtime with
+  # what the code does (e.g. roles/bigquery.dataEditor and roles/bigquery.jobUser,
+  # roles/storage.objectViewer on the bucket).
+  #
+  # gcs-file-loader:
+  #   description: Loads files that land in the landing bucket into BigQuery.
+  #   build_config:
+  #     entry_point: load_file
+  #     source: { dir: gcs-file-loader }
+  #   service_config:
+  #     available_memory: 512M
+  #     timeout_seconds: 540              # maximum for event-driven functions
+  #     environment_variables:
+  #       BQ_DATASET: REPLACE-ME-dataset
+  #   event_trigger:
+  #     event_type: google.cloud.storage.object.v1.finalized
+  #     trigger_region: europe-west2      # the bucket's location
+  #     retry_policy: RETRY_POLICY_RETRY  # failed events are redelivered: keep the code idempotent
+  #     service_account_email: cf-trigger@REPLACE-ME-dev-project-id.iam.gserviceaccount.com
+  #     event_filters:
+  #       - { attribute: bucket, value: REPLACE-ME-dev-landing-bucket }
+  #   invokers:
+  #     - serviceAccount:cf-trigger@REPLACE-ME-dev-project-id.iam.gserviceaccount.com
+
+  # A message on a Pub/Sub topic -> the function runs.
+  # Needs: the topic; cf-trigger as above.
+  #
+  # pubsub-handler:
+  #   description: Handles messages on the REPLACE-ME topic.
+  #   build_config:
+  #     entry_point: handle_message
+  #     source: { dir: pubsub-handler }
+  #   event_trigger:
+  #     pubsub_topic: REPLACE-ME-topic    # short name: a topic in project_id
+  #     retry_policy: RETRY_POLICY_DO_NOT_RETRY
+  #     service_account_email: cf-trigger@REPLACE-ME-dev-project-id.iam.gserviceaccount.com
+  #   invokers:
+  #     - serviceAccount:cf-trigger@REPLACE-ME-dev-project-id.iam.gserviceaccount.com
+
+  # HTTP, called by Composer (Airflow) or Workflows with an ID token.
+  # Needs: the caller's service account in invokers.
+  #
+  # composer-callable:
+  #   description: Called from Airflow DAGs.
+  #   build_config:
+  #     entry_point: handle_request
+  #     source: { dir: composer-callable }
+  #   service_config:
+  #     ingress_settings: ALLOW_ALL       # Composer usually calls from outside your VPC; invokers still decide who may call
+  #     timeout_seconds: 300
+  #   invokers:
+  #     - serviceAccount:REPLACE-ME-composer-sa@REPLACE-ME-dev-project-id.iam.gserviceaccount.com

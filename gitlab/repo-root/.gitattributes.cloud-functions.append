@@ -1,0 +1,5 @@
+
+# Cloud Functions: Terraform zips this code and deploys it under the archive's
+# MD5. LF on every platform keeps that hash identical on Windows laptops and
+# Linux runners, so local and pipeline plans agree.
+src/cloud-functions/** text=auto eol=lf

@@ -1,0 +1,6 @@
+
+# Cloud Functions: local source archives (written under .terraform/) and Python caches
+.terraform/
+__pycache__/
+.pytest_cache/
+.venv/

@@ -22,68 +22,72 @@
 # Every entry starts with enabled: false, so the file can be planned as it is.
 # Replace every REPLACE-ME, then set enabled: true on the entries you want.
 
-project_id: REPLACE-ME-dev-project-id
+project_id: REPLACE-ME-dev-project-id   # the project every job and pipeline runs in
 
-defaults:
-  region: europe-west2
-  labels:
+defaults:                           # settings every job and pipeline gets, unless it sets its own
+  region: europe-west2              # where everything runs
+  labels:                           # labels on every job, e.g. for cost reports
     environment: dev
     managed-by: terraform
 
   # Worker settings of every job and pipeline. &workers is merged into the
   # pipeline defaults below, so they are written once.
   jobs: &workers
+    # The identity the workers run as.
     service_account_email: dataflow-worker@REPLACE-ME-dev-project-id.iam.gserviceaccount.com
-    temp_location: gs://REPLACE-ME-dev-dataflow-bucket/tmp
+    temp_location: gs://REPLACE-ME-dev-dataflow-bucket/tmp   # folder for temporary files
     # With Shared VPC, the full URL:
     # https://www.googleapis.com/compute/v1/projects/HOST_PROJECT/regions/europe-west2/subnetworks/NAME
-    subnetwork: regions/europe-west2/subnetworks/REPLACE-ME-subnetwork
-    ip_configuration: WORKER_IP_PRIVATE     # needs Private Google Access on the subnetwork
-    machine_type: e2-standard-2
-    max_workers: 2
+    subnetwork: regions/europe-west2/subnetworks/REPLACE-ME-subnetwork   # the network the workers use
+    ip_configuration: WORKER_IP_PRIVATE     # no public IPs; needs Private Google Access on the subnetwork
+    machine_type: e2-standard-2             # size of each worker VM
+    max_workers: 2                          # scale up to at most 2 workers (dev)
 
-  pipelines:
-    <<: *workers
+  pipelines:                        # settings shared by all pipelines
+    <<: *workers                    # reuse the worker settings above
+    # The identity Cloud Scheduler uses to start each scheduled run.
     scheduler_service_account_email: dataflow-scheduler@REPLACE-ME-dev-project-id.iam.gserviceaccount.com
-    time_zone: Europe/London
+    time_zone: Europe/London        # the schedules below are London time
 
-jobs:
+jobs:                               # each key is one job, and its name
   # Streaming: Pub/Sub subscription to BigQuery, from a Google-provided Flex
   # Template. Runs until the entry is removed (or disabled).
   events-to-bigquery:
-    enabled: false
+    enabled: false                  # checked, but not deployed; set to true to launch the job
     google_template:
-      name: PubSub_to_BigQuery_Flex
-    parameters:
+      name: PubSub_to_BigQuery_Flex # Google's "Pub/Sub to BigQuery" template
+    parameters:                     # the template's inputs
+      # Read messages from this subscription.
       inputSubscription: projects/REPLACE-ME-dev-project-id/subscriptions/REPLACE-ME-subscription
-      outputTableSpec: REPLACE-ME-dev-project-id:REPLACE-ME-dataset.events
-      outputDeadletterTable: REPLACE-ME-dev-project-id:REPLACE-ME-dataset.events_deadletter
-    staging_location: gs://REPLACE-ME-dev-dataflow-bucket/staging
-    enable_streaming_engine: true
-    on_delete: cancel                       # dev: a destroy doesn't wait for a drain
+      outputTableSpec: REPLACE-ME-dev-project-id:REPLACE-ME-dataset.events                    # write rows here
+      outputDeadletterTable: REPLACE-ME-dev-project-id:REPLACE-ME-dataset.events_deadletter   # failed messages go here
+    staging_location: gs://REPLACE-ME-dev-dataflow-bucket/staging   # folder for the job's staged files
+    enable_streaming_engine: true   # keep streaming state in Dataflow's backend, not on the workers
+    on_delete: cancel               # when removed, stop at once (dev: a destroy doesn't wait for a drain)
 
-pipelines:
+pipelines:                          # each key is one Data Pipeline, and its ID
   # Batch, daily at 02:00: newline-delimited JSON files to BigQuery, from a
   # Google-provided Flex Template.
   daily-files-to-bigquery:
-    enabled: false
-    schedule: "0 2 * * *"
+    enabled: false                  # checked, but not deployed; set to true to create the pipeline
+    schedule: "0 2 * * *"           # every day at 02:00
     google_template:
-      name: GCS_Text_to_BigQuery_Flex
-    parameters:
-      inputFilePattern: gs://REPLACE-ME-dev-landing-bucket/daily/*.json
-      JSONPath: gs://REPLACE-ME-dev-dataflow-bucket/schemas/daily.json
-      outputTable: REPLACE-ME-dev-project-id:REPLACE-ME-dataset.daily
-      bigQueryLoadingTemporaryDirectory: gs://REPLACE-ME-dev-dataflow-bucket/bq-tmp
+      name: GCS_Text_to_BigQuery_Flex   # Google's "files in Cloud Storage to BigQuery" template
+    parameters:                     # the template's inputs
+      inputFilePattern: gs://REPLACE-ME-dev-landing-bucket/daily/*.json               # the files to load
+      JSONPath: gs://REPLACE-ME-dev-dataflow-bucket/schemas/daily.json                # the BigQuery schema of the rows
+      outputTable: REPLACE-ME-dev-project-id:REPLACE-ME-dataset.daily                 # the table to load into
+      bigQueryLoadingTemporaryDirectory: gs://REPLACE-ME-dev-dataflow-bucket/bq-tmp   # scratch space for the load
 
   # Batch, nightly at 01:30: your own Flex Template, i.e. the spec file that
   # gcloud dataflow flex-template build wrote. Created paused: state: ACTIVE
   # starts the schedule.
   nightly-orders-transform:
-    enabled: false
-    schedule: "30 1 * * *"
-    state: PAUSED
+    enabled: false                  # checked, but not deployed; set to true to create the pipeline
+    schedule: "30 1 * * *"          # every day at 01:30
+    state: PAUSED                   # exists, but launches nothing until set to ACTIVE
+    # Your Flex Template: the spec file in Cloud Storage.
     container_spec_gcs_path: gs://REPLACE-ME-dev-dataflow-bucket/templates/orders-transform.json
-    parameters:
+    parameters:                     # your pipeline's own inputs
       input_table: REPLACE-ME-dev-project-id:REPLACE-ME-dataset.orders
       output_table: REPLACE-ME-dev-project-id:REPLACE-ME-dataset.orders_curated

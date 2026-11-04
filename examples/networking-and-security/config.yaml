@@ -10,50 +10,58 @@
 #   - Binary Authorization, a private Cloud Build worker pool and a dedicated
 #     build service account
 #   - IAM with a condition, and deletion protection
+#
+# project_id is a template variable that main.tf fills in.
 
-project_id: ${project_id}
+project_id: ${project_id}               # project every function is deployed to
 
-defaults:
-  region: europe-west3
+defaults:                               # settings for the whole file
+  region: europe-west3                  # region every function is deployed to
   labels:
-    data-classification: confidential
-  functions:
+    data-classification: confidential  # label on every function
+  functions:                            # starting values for every function below
+    # Encrypts each function and its image with your own Cloud KMS key (CMEK).
     kms_key_name: projects/${project_id}/locations/europe-west3/keyRings/functions/cryptoKeys/functions
-    deletion_policy: PREVENT
+    deletion_policy: PREVENT            # terraform destroy fails instead of deleting the function
     build_config:
-      runtime: python312
-      entry_point: handler
+      runtime: python312                # language and version
+      entry_point: handler              # the function in the code to call
+      # Where the built image is stored: a repository encrypted with the same key.
       docker_repository: projects/${project_id}/locations/europe-west3/repositories/functions-cmek
+      # Identity the build runs as.
       service_account: projects/${project_id}/serviceAccounts/fn-builder@${project_id}.iam.gserviceaccount.com
+      # Builds run on your private Cloud Build pool, not Google's shared one.
       worker_pool: projects/${project_id}/locations/europe-west3/workerPools/private-pool
       source:
-        bucket: ${project_id}-fn-sources-eu
+        bucket: ${project_id}-fn-sources-eu   # bucket the zipped code is uploaded to
     service_config:
-      ingress_settings: ALLOW_INTERNAL_AND_GCLB
-      binary_authorization_policy: default
+      ingress_settings: ALLOW_INTERNAL_AND_GCLB   # calls only from inside Google Cloud or the load balancer
+      binary_authorization_policy: default        # deploys only images the Binary Authorization policy allows
 
-functions:
+functions:                              # one entry per function; the key is its name
   # Reaches a Cloud SQL private IP through a Serverless VPC Access connector;
   # all egress goes through the VPC (and so through Cloud NAT and firewalls).
   ledger:
     description: Writes ledger entries to the private database.
     build_config:
-      source: { dir: src/ledger }
+      source: { dir: src/ledger }       # folder that is zipped and uploaded
     service_config:
+      # Identity the code runs as; its roles decide what the code may access.
       service_account_email: ledger@${project_id}.iam.gserviceaccount.com
+      # Connector that links the function to the VPC.
       vpc_connector: projects/${project_id}/locations/europe-west3/connectors/serverless-eu
-      vpc_connector_egress_settings: ALL_TRAFFIC
-      secret_environment_variables:
-        - key: DB_PASSWORD
+      vpc_connector_egress_settings: ALL_TRAFFIC   # all outgoing traffic goes through the VPC
+      secret_environment_variables:     # Secret Manager secrets, read as variables
+        - key: DB_PASSWORD              # variable name the code reads
           secret: ledger-db-password
           version: "7"                  # pinned version
         - key: SIGNING_KEY
           secret: ledger-signing-key
           project_id: security-shared   # secret owned by another project
-      secret_volumes:
-        - mount_path: /etc/ledger-tls
+      secret_volumes:                   # Secret Manager secrets, read as files
+        - mount_path: /etc/ledger-tls   # folder the files appear in
           secret: ledger-tls
-          versions:
+          versions:                     # which versions, under which file names
             - { path: cert.pem, version: latest }
             - { path: previous-cert.pem, version: "3" }
 
@@ -65,12 +73,12 @@ functions:
       source: { dir: src/payments-webhook }
     service_config:
       service_account_email: payments@${project_id}.iam.gserviceaccount.com
-      available_memory: 512M
-      direct_vpc_network_interface:
+      available_memory: 512M            # memory per instance
+      direct_vpc_network_interface:     # the network and subnet the function joins
         - network: projects/${project_id}/global/networks/prod-vpc
           subnetwork: projects/${project_id}/regions/europe-west3/subnetworks/serverless
-          tags: [payments, egress-psp]
-      direct_vpc_egress: VPC_EGRESS_PRIVATE_RANGES_ONLY
+          tags: [payments, egress-psp]  # network tags, for firewall rules
+      direct_vpc_egress: VPC_EGRESS_PRIVATE_RANGES_ONLY   # only traffic to private IPs goes into the VPC
       secret_volumes:
         - mount_path: /secrets/webhook
           secret: psp-webhook-secret     # mounted as /secrets/webhook/psp-webhook-secret
@@ -84,16 +92,17 @@ functions:
     build_config:
       source: { dir: src/internal-proxy }
     service_config:
-      ingress_settings: ALLOW_INTERNAL_ONLY
+      ingress_settings: ALLOW_INTERNAL_ONLY   # only callers inside Google Cloud
+      # Only the subnet is given; its network is used.
       direct_vpc_network_interface:
         - subnetwork: projects/${project_id}/regions/europe-west3/subnetworks/serverless
-      direct_vpc_egress: VPC_EGRESS_ALL_TRAFFIC
-    invokers:
+      direct_vpc_egress: VPC_EGRESS_ALL_TRAFFIC   # all outgoing traffic goes through the VPC
+    invokers:                            # the only caller
       - serviceAccount:migrator@${project_id}.iam.gserviceaccount.com
-    iam:
-      - role: roles/cloudfunctions.developer
+    iam:                                 # extra roles on the function itself
+      - role: roles/cloudfunctions.developer   # may change and redeploy the function
         members: [group:migration-team@example.com]
-        condition:
+        condition:                       # the grant only works while the expression is true
           title: until-end-of-migration
           description: Access ends when the migration window closes.
           expression: request.time < timestamp("2027-01-31T00:00:00Z")

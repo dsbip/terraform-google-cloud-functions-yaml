@@ -3,41 +3,44 @@
 # Complete example: every configuration key the module supports, across eight
 # functions (one disabled). Read it next to docs/functions.md;
 # tests/python/test_schema.py checks that no key is missing here.
+#
+# project_id is a template variable that main.tf fills in.
 
-project_id: ${project_id}
+project_id: ${project_id}               # default project of every function
 
-defaults:
-  region: us-central1
-  labels:
+defaults:                               # settings for the whole file
+  region: us-central1                   # default region of every function
+  labels:                               # labels on every function (billing, search)
     app: shop
     owner: platform
-  functions:
+  functions:                            # starting values for every function; a function's own value wins
     labels:
-      tier: standard
-    build_config:
-      runtime: python312
-      entry_point: handler
-      runtime_update_policy: AUTOMATIC
+      tier: standard                    # a function can override this label
+    build_config:                       # how the code is built
+      runtime: python312                # language and version
+      entry_point: handler              # the function in the code to call
+      runtime_update_policy: AUTOMATIC  # base-image security patches without a redeploy
       source:
-        bucket: ${project_id}-fn-sources
-        object_prefix: complete/
-        excludes: [tests/**, "**/__pycache__/**"]
-      environment_variables:
+        bucket: ${project_id}-fn-sources   # bucket the zipped code is uploaded to
+        object_prefix: complete/        # zip names start with this prefix
+        excludes: [tests/**, "**/__pycache__/**"]   # files never uploaded
+      environment_variables:            # used while building: here, where pip downloads packages
         PIP_INDEX_URL: https://us-python.pkg.dev/${project_id}/pypi-remote/simple/
-    service_config:
-      available_memory: 512M
-      timeout_seconds: 60
-      max_instance_count: 20
+    service_config:                     # how the code runs
+      available_memory: 512M            # memory per instance
+      timeout_seconds: 60               # a request is stopped after 60 seconds
+      max_instance_count: 20            # at most 20 instances at once
+      # Identity the code runs as; its roles decide what the code may access.
       service_account_email: shop-functions@${project_id}.iam.gserviceaccount.com
-      all_traffic_on_latest_revision: true
-      environment_variables:
+      all_traffic_on_latest_revision: true   # each deploy takes all traffic at once
+      environment_variables:            # variables the code can read at run time
         LOG_LEVEL: info
         PROJECT_ID: ${project_id}
 
-functions:
+functions:                              # one entry per function
   # HTTP, public, every service_config setting that is not networking.
   checkout:
-    name: shop-checkout                 # differs from the key
+    name: shop-checkout                 # name in Google Cloud (default: the key)
     description: Checkout endpoint.
     labels:
       tier: critical                    # overrides the defaults.functions label
@@ -46,20 +49,21 @@ functions:
         dir: src/checkout               # tests/** is excluded (defaults)
     service_config:
       available_memory: 2Gi
-      available_cpu: "2"
+      available_cpu: "2"                # CPUs per instance (written as a string)
       timeout_seconds: 300
-      min_instance_count: 1
+      min_instance_count: 1             # always running: no cold starts, but billed while idle
       max_instance_count: 100
-      max_instance_request_concurrency: 80
+      max_instance_request_concurrency: 80   # requests one instance handles at the same time
       environment_variables:
         PAYMENT_PROVIDER: stripe        # merged with LOG_LEVEL and PROJECT_ID
-      secret_environment_variables:
-        - { key: STRIPE_KEY, secret: stripe-api-key }
-        - { key: WEBHOOK_SECRET, secret: stripe-webhook, version: "2" }
+      secret_environment_variables:     # Secret Manager secrets, read as variables
+        - { key: STRIPE_KEY, secret: stripe-api-key }                    # latest version
+        - { key: WEBHOOK_SECRET, secret: stripe-webhook, version: "2" }  # pinned to version 2
+        # A secret owned by another project.
         - { key: FRAUD_API_KEY, secret: fraud-api-key, project_id: shared-secrets }
-    invokers: [allUsers]
-    iam:
-      - role: roles/cloudfunctions.viewer
+    invokers: [allUsers]                # anyone may call it (public)
+    iam:                                # extra roles on the function itself
+      - role: roles/cloudfunctions.viewer   # can see the function, not change it
         members: [group:support@example.com, group:sre@example.com]
 
   # Pub/Sub with every event_trigger key, Direct VPC egress, secret volume.
@@ -70,45 +74,51 @@ functions:
       source:
         dir: src/inventory-sync
     service_config:
-      ingress_settings: ALLOW_INTERNAL_ONLY
-      direct_vpc_network_interface:
+      ingress_settings: ALLOW_INTERNAL_ONLY   # no calls from the internet
+      direct_vpc_network_interface:     # Direct VPC egress: the network and subnet to join
         - network: shop-vpc
           subnetwork: shop-serverless-east
-          tags: [inventory]
-      direct_vpc_egress: VPC_EGRESS_ALL_TRAFFIC
-      secret_volumes:
-        - mount_path: /secrets/warehouse
+          tags: [inventory]             # network tags, for firewall rules
+      direct_vpc_egress: VPC_EGRESS_ALL_TRAFFIC   # all outgoing traffic goes through the VPC
+      secret_volumes:                   # Secret Manager secrets, read as files
+        - mount_path: /secrets/warehouse   # folder the files appear in
           secret: warehouse-credentials
-          project_id: shared-secrets
-          versions:
+          project_id: shared-secrets    # secret owned by another project
+          versions:                     # which versions, under which file names
             - { path: credentials.json, version: latest }
-    event_trigger:
-      pubsub_topic: inventory-updates
-      trigger_region: us-east1
-      retry_policy: RETRY_POLICY_RETRY
+    event_trigger:                      # runs on events, not HTTP calls
+      pubsub_topic: inventory-updates   # once per message published to this topic
+      trigger_region: us-east1          # where the trigger lives
+      retry_policy: RETRY_POLICY_RETRY  # failed messages are delivered again, so handle repeats
+      # Identity Eventarc uses to deliver the messages to the function.
       service_account_email: shop-events@${project_id}.iam.gserviceaccount.com
-    invokers:
+    invokers:                           # the trigger's identity must be allowed to call it
       - serviceAccount:shop-events@${project_id}.iam.gserviceaccount.com
 
   # Cloud Storage trigger, VPC connector, CMEK, private build, Binary
   # Authorization, deletion protection.
   webhooks:
     description: Processes webhook payloads dropped into the inbox bucket.
+    # Encrypts the function and its image with your own Cloud KMS key (CMEK).
     kms_key_name: projects/${project_id}/locations/us-central1/keyRings/shop/cryptoKeys/functions
-    deletion_policy: PREVENT
+    deletion_policy: PREVENT            # terraform destroy fails instead of deleting the function
     build_config:
       source:
         dir: src/webhooks
+      # Where the built image is stored: a repository encrypted with the same key.
       docker_repository: projects/${project_id}/locations/us-central1/repositories/functions-cmek
+      # Identity the build runs as.
       service_account: projects/${project_id}/serviceAccounts/builder@${project_id}.iam.gserviceaccount.com
+      # Builds run on your private Cloud Build pool, not Google's shared one.
       worker_pool: projects/${project_id}/locations/us-central1/workerPools/private
     service_config:
+      # Connector that links the function to the VPC.
       vpc_connector: projects/${project_id}/locations/us-central1/connectors/shop
-      vpc_connector_egress_settings: PRIVATE_RANGES_ONLY
-      binary_authorization_policy: default
+      vpc_connector_egress_settings: PRIVATE_RANGES_ONLY   # only traffic to private IPs uses the connector
+      binary_authorization_policy: default   # deploys only images the Binary Authorization policy allows
     event_trigger:
-      event_type: google.cloud.storage.object.v1.finalized
-      event_filters:
+      event_type: google.cloud.storage.object.v1.finalized   # a file was uploaded or overwritten
+      event_filters:                    # only events that match every filter
         - { attribute: bucket, value: "${project_id}-webhook-inbox" }
       service_account_email: shop-events@${project_id}.iam.gserviceaccount.com
     invokers:
@@ -118,18 +128,18 @@ functions:
   receipts:
     description: Renders receipts.
     build_config:
-      runtime: nodejs22
+      runtime: nodejs22                 # overrides python312 from the defaults
       entry_point: render
-      runtime_update_policy: ON_DEPLOY
+      runtime_update_policy: ON_DEPLOY  # base-image patches only when you deploy
       environment_variables:
         NPM_CONFIG_REGISTRY: https://us-npm.pkg.dev/${project_id}/npm-remote/   # added to PIP_INDEX_URL
       source:
-        zip: dist/receipts.zip
-    invokers: ["serviceAccount:checkout@${project_id}.iam.gserviceaccount.com"]
-    iam:
+        zip: dist/receipts.zip          # ready-made zip next to this file, uploaded as-is
+    invokers: ["serviceAccount:checkout@${project_id}.iam.gserviceaccount.com"]   # only checkout may call it
+    iam:                                # extra roles on the function itself
       - role: roles/cloudfunctions.invoker
         members: [user:auditor@example.com]
-        condition:
+        condition:                      # the grant only works while the expression is true
           title: q4-audit
           description: Read access for the Q4 audit.
           expression: request.time < timestamp("2027-01-15T00:00:00Z")
@@ -140,8 +150,8 @@ functions:
     description: Tax rate lookup.
     build_config:
       source:
-        object: releases/tax-rates-1.4.0.zip
-        generation: 1767225600000000
+        object: releases/tax-rates-1.4.0.zip   # zip already in the bucket; nothing is uploaded
+        generation: 1767225600000000           # deploy exactly this upload of the object
     invokers: ["serviceAccount:checkout@${project_id}.iam.gserviceaccount.com"]
 
   # Cloud Source Repositories, scheduled through Pub/Sub, no retries.
@@ -149,16 +159,16 @@ functions:
     description: Nightly cleanup, triggered by Cloud Scheduler through Pub/Sub.
     build_config:
       source:
-        repo:
+        repo:                           # build from a Cloud Source Repositories repository
           repo_name: shop-functions
-          commit_sha: 4f1c2a9e0b7d3c5a8e6f1b2d9c0a7e3f5b8d1c4a
-          dir: cleanup
-          invert_regex: false
+          commit_sha: 4f1c2a9e0b7d3c5a8e6f1b2d9c0a7e3f5b8d1c4a   # this exact commit
+          dir: cleanup                  # folder in the repository that holds the code
+          invert_regex: false           # true would match everything except the branch or tag
     service_config:
-      timeout_seconds: 540
+      timeout_seconds: 540              # the maximum for event-driven functions
     event_trigger:
-      pubsub_topic: nightly-cleanup
-      retry_policy: RETRY_POLICY_DO_NOT_RETRY
+      pubsub_topic: nightly-cleanup     # Cloud Scheduler publishes here every night
+      retry_policy: RETRY_POLICY_DO_NOT_RETRY   # a failed run is not repeated
       service_account_email: shop-events@${project_id}.iam.gserviceaccount.com
     invokers:
       - serviceAccount:shop-events@${project_id}.iam.gserviceaccount.com
@@ -170,12 +180,13 @@ functions:
       source:
         repo:
           repo_name: shop-functions
-          tag_name: ^user-events-v1\.
+          tag_name: ^user-events-v1\.   # a tag matching this regex
           dir: user-events
     event_trigger:
-      event_type: google.cloud.firestore.document.v1.written
+      event_type: google.cloud.firestore.document.v1.written   # a document was created, changed or deleted
       event_filters:
-        - { attribute: database, value: (default) }
+        - { attribute: database, value: (default) }            # the project's default database
+        # Any document directly under users/ (value is a path pattern).
         - { attribute: document, value: "users/{userId}", operator: match-path-pattern }
       service_account_email: shop-events@${project_id}.iam.gserviceaccount.com
     invokers:
@@ -184,12 +195,12 @@ functions:
   # Kept in the file (and validated) but switched off. Its source is a branch
   # of a repository in another project.
   legacy-checkout:
-    enabled: false
+    enabled: false                      # not deployed, but still checked
     description: Retired; kept for reference.
     build_config:
       source:
         repo:
-          project_id: shop-legacy
+          project_id: shop-legacy       # repository in another project
           repo_name: monolith
-          branch_name: ^release/.*$
+          branch_name: ^release/.*$     # any release/ branch (a regex)
           dir: functions/checkout

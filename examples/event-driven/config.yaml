@@ -8,68 +8,73 @@
 #
 # Every trigger uses the same service account, which must be allowed to invoke
 # the functions: listing it in invokers grants roles/run.invoker.
+#
+# region, source_bucket and project_id are template variables that main.tf
+# fills in.
 
-defaults:
-  region: ${region}
+defaults:                               # settings for the whole file
+  region: ${region}                     # region every function is deployed to
   labels:
-    app: events-demo
-  functions:
+    app: events-demo                    # label on every function
+  functions:                            # starting values for every function below
     build_config:
-      runtime: python312
+      runtime: python312                # language and version
       source:
-        bucket: ${source_bucket}
-        object_prefix: event-driven/
+        bucket: ${source_bucket}        # bucket the zipped code is uploaded to
+        object_prefix: event-driven/    # zip names start with this prefix
     service_config:
-      available_memory: 256M
-      max_instance_count: 5
-      timeout_seconds: 120
+      available_memory: 256M            # memory per instance
+      max_instance_count: 5             # at most 5 instances at once
+      timeout_seconds: 120              # each event gets up to 2 minutes
+      # Identity the code runs as; its roles decide what the code may access.
       service_account_email: events-runtime@${project_id}.iam.gserviceaccount.com
-    event_trigger:
+    event_trigger:                      # the functions run on events, not HTTP calls
+      # Identity Eventarc uses to deliver the events to the function.
       service_account_email: events-trigger@${project_id}.iam.gserviceaccount.com
-      retry_policy: RETRY_POLICY_RETRY
-    invokers:
+      retry_policy: RETRY_POLICY_RETRY  # failed events are delivered again, so handle repeats
+    invokers:                           # the trigger's identity must be allowed to call the functions
       - serviceAccount:events-trigger@${project_id}.iam.gserviceaccount.com
 
-functions:
+functions:                              # one entry per function; the key is its name
   # A short topic name means a topic in the function's project.
   order-events:
     description: Processes order events from Pub/Sub.
     build_config:
-      entry_point: on_order
-      source: { dir: src/order-events }
+      entry_point: on_order             # the function in the code to call
+      source: { dir: src/order-events } # folder that is zipped and uploaded
     event_trigger:
-      pubsub_topic: orders
+      pubsub_topic: orders              # runs once per message published to this topic
 
   # Topic in another project, given by its full name, without retries.
   partner-feed:
     description: Consumes the partner feed from the partner's project.
     build_config:
       entry_point: on_order
-      source: { dir: src/order-events }
+      source: { dir: src/order-events } # same code as order-events
     event_trigger:
       pubsub_topic: projects/partner-project/topics/feed
-      retry_policy: RETRY_POLICY_DO_NOT_RETRY
+      retry_policy: RETRY_POLICY_DO_NOT_RETRY   # a failed message is dropped
 
   # The trigger region must be the bucket's location (here a dual-region in
   # the US, so "us").
   thumbnails:
     description: Creates thumbnails of uploaded images.
     build_config:
-      runtime: nodejs22
+      runtime: nodejs22                 # overrides python312 from the defaults
       entry_point: makeThumbnail
       source:
         dir: src/thumbnails
-        excludes: [node_modules/**]
+        excludes: [node_modules/**]     # installed during the build, not uploaded
     service_config:
       available_memory: 1Gi
-      environment_variables:
+      environment_variables:            # variables the code can read at run time
         THUMBNAIL_BUCKET: ${project_id}-thumbnails
     event_trigger:
-      event_type: google.cloud.storage.object.v1.finalized
+      event_type: google.cloud.storage.object.v1.finalized   # a file was uploaded or overwritten
       trigger_region: us
-      event_filters:
+      event_filters:                    # only events that match every filter
         - attribute: bucket
-          value: ${project_id}-uploads
+          value: ${project_id}-uploads  # only files in this bucket
 
   # Firestore: every write to users/{userId} in the (default) database.
   profile-sync:
@@ -78,13 +83,13 @@ functions:
       entry_point: on_user_written
       source: { dir: src/profile-sync }
     event_trigger:
-      event_type: google.cloud.firestore.document.v1.written
+      event_type: google.cloud.firestore.document.v1.written   # a document was created, changed or deleted
       event_filters:
         - attribute: database
-          value: (default)
+          value: (default)              # the project's default database
         - attribute: document
-          value: users/{userId}
-          operator: match-path-pattern
+          value: users/{userId}         # any document directly under users/
+          operator: match-path-pattern  # value is a path pattern, not an exact name
 
   # Cloud Audit Logs: one event per service account key creation, anywhere
   # in the project (audit triggers are global).
@@ -94,11 +99,11 @@ functions:
       entry_point: on_key_created
       source: { dir: src/audit-watch }
     event_trigger:
-      event_type: google.cloud.audit.log.v1.written
+      event_type: google.cloud.audit.log.v1.written   # an entry was written to Cloud Audit Logs
       trigger_region: global
       retry_policy: RETRY_POLICY_DO_NOT_RETRY
       event_filters:
         - attribute: serviceName
-          value: iam.googleapis.com
+          value: iam.googleapis.com     # the IAM API...
         - attribute: methodName
-          value: google.iam.admin.v1.CreateServiceAccountKey
+          value: google.iam.admin.v1.CreateServiceAccountKey   # ...creating a service account key

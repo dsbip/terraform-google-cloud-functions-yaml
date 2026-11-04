@@ -8,37 +8,41 @@
 # Variables: env (dev, staging, prod), project_id, source_bucket,
 # max_instances, alert_topic.
 #
+# The if / else / endif lines are those templatefile() directives: the lines
+# between them are kept only in the environments the condition names.
+#
 # Placeholders that contain ": " or quotes are wrapped in single quotes, so the
 # file is valid YAML both before rendering (for editors) and after.
 
-defaults:
-  region: europe-west1
+defaults:                               # settings for the whole file
+  region: europe-west1                  # region every function is deployed to
   labels:
-    environment: ${env}
-  functions:
+    environment: ${env}                 # dev, staging or prod, on every function
+  functions:                            # starting values for every function below
     build_config:
-      runtime: python312
-      entry_point: handler
+      runtime: python312                # language and version
+      entry_point: handler              # the function in the code to call
       source:
-        bucket: ${source_bucket}
-        object_prefix: ${env}/
+        bucket: ${source_bucket}        # each environment uploads to its own bucket
+        object_prefix: ${env}/          # zip names start with the environment, e.g. dev/
     service_config:
-      max_instance_count: ${max_instances}
-      environment_variables:
-        ENVIRONMENT: ${env}
+      max_instance_count: ${max_instances}   # set per environment in main.tf
+      environment_variables:            # variables the code can read at run time
+        ENVIRONMENT: ${env}             # tells the code where it runs
+      # prod only: one instance always running, and no calls straight from the internet.
 %{ if env == "prod" ~}
       min_instance_count: 1
       ingress_settings: ALLOW_INTERNAL_AND_GCLB
 %{ endif ~}
 
-functions:
+functions:                              # one entry per function; the key is its name
   api:
     description: Public API (${env}).
     build_config:
-      source: { dir: src/api }
+      source: { dir: src/api }          # folder that is zipped and uploaded
     service_config:
-      available_memory: '${env == "prod" ? "1Gi" : "256M"}'
-    invokers:
+      available_memory: '${env == "prod" ? "1Gi" : "256M"}'   # 1Gi in prod, 256M elsewhere
+    invokers:                           # prod: only the API gateway; elsewhere: public
 %{ if env == "prod" ~}
       - serviceAccount:api-gateway@${project_id}.iam.gserviceaccount.com
 %{ else ~}
@@ -49,27 +53,28 @@ functions:
     description: Background worker (${env}).
     build_config:
       source: { dir: src/worker }
-    event_trigger:
-      pubsub_topic: jobs-${env}
-      retry_policy: '${env == "prod" ? "RETRY_POLICY_RETRY" : "RETRY_POLICY_DO_NOT_RETRY"}'
+    event_trigger:                      # runs on Pub/Sub messages, not HTTP calls
+      pubsub_topic: jobs-${env}         # one topic per environment, e.g. jobs-dev
+      retry_policy: '${env == "prod" ? "RETRY_POLICY_RETRY" : "RETRY_POLICY_DO_NOT_RETRY"}'   # retries in prod only
+      # Identity Eventarc uses to deliver the messages to the function.
       service_account_email: worker-trigger@${project_id}.iam.gserviceaccount.com
-    invokers:
+    invokers:                           # the trigger's identity must be allowed to call it
       - serviceAccount:worker-trigger@${project_id}.iam.gserviceaccount.com
 
   # Only in dev; in other environments it is validated but not deployed.
   debug-echo:
-    enabled: ${env == "dev"}
+    enabled: ${env == "dev"}            # true in dev, false elsewhere
     description: Echo endpoint for debugging.
     build_config:
       source: { dir: src/debug }
-    invokers: [group:developers@example.com]
+    invokers: [group:developers@example.com]   # only developers may call it
 
 %{ if alert_topic != "" ~}
   # Only where an alert topic is configured.
   alert-forwarder:
     description: Forwards alerts to the on-call channel.
     build_config:
-      source: { dir: src/worker }
+      source: { dir: src/worker }       # same code as worker
     event_trigger:
-      pubsub_topic: ${alert_topic}
+      pubsub_topic: ${alert_topic}      # full topic name, from main.tf
 %{ endif ~}

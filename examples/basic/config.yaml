@@ -5,19 +5,19 @@
 # under a content hash, and redeploys only when the code changes.
 #
 # The project and region come from the module's variables (see main.tf); the
-# bucket name is a template variable.
+# bucket name is a template variable that main.tf fills in.
 
-functions:
-  hello:
+functions:                          # one entry per function
+  hello:                            # the key is the function's name in Google Cloud
     description: Says hello over HTTP.
-    build_config:
-      runtime: python312
-      entry_point: hello
-      source:
-        dir: src/hello
-        bucket: ${source_bucket}
-    service_config:
-      available_memory: 256M
-      max_instance_count: 3
-    invokers:
-      - allUsers   # public: anyone can call the function's URL
+    build_config:                   # how the code is built
+      runtime: python312            # language and version
+      entry_point: hello            # the function in the code to call (def hello)
+      source:                       # where the code comes from
+        dir: src/hello              # folder (relative to this file) that is zipped and uploaded
+        bucket: ${source_bucket}    # bucket the zip is uploaded to
+    service_config:                 # how the function runs
+      available_memory: 256M        # memory per instance
+      max_instance_count: 3         # never more than 3 instances at once
+    invokers:                       # who may call the function
+      - allUsers                    # public: anyone can call the function's URL

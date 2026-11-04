@@ -8,30 +8,31 @@
 #   - repo:   a branch, tag or commit in Cloud Source Repositories
 #
 # The release version is a template variable, so promoting a release is a
-# one-line change in the calling module.
+# one-line change in the calling module. artifact_bucket, release,
+# fx_rates_generation and project_id are filled in by main.tf.
 
-defaults:
-  region: us-east1
+defaults:                               # settings for the whole file
+  region: us-east1                      # region every function is deployed to
   labels:
-    release: v${release}
-  functions:
+    release: v${release}                # release label on every function, e.g. v2.4.1
+  functions:                            # starting values for every function below
     build_config:
       source:
-        bucket: ${artifact_bucket}
+        bucket: ${artifact_bucket}      # bucket for uploads, and where CI keeps its archives
     service_config:
-      max_instance_count: 20
+      max_instance_count: 20            # at most 20 instances of a function at once
 
-functions:
+functions:                              # one entry per function; the key is its name
   # Local zip built by CI; the object name contains the archive's MD5 hash.
   invoice-renderer:
     description: Renders invoices as HTML.
     build_config:
-      runtime: nodejs22
-      entry_point: render
+      runtime: nodejs22                 # language and version
+      entry_point: render               # the function in the code to call
       source:
-        zip: dist/invoice-renderer.zip
-        object_prefix: releases/
-    invokers: ["serviceAccount:billing@${project_id}.iam.gserviceaccount.com"]
+        zip: dist/invoice-renderer.zip  # ready-made zip next to this file, uploaded as-is
+        object_prefix: releases/        # uploaded as releases/invoice-renderer-<hash>.zip
+    invokers: ["serviceAccount:billing@${project_id}.iam.gserviceaccount.com"]   # only billing may call it
 
   # Archive uploaded by CI, addressed by release. The latest generation of the
   # object is deployed.
@@ -41,7 +42,7 @@ functions:
       runtime: python312
       entry_point: calculate
       source:
-        object: tax-calculator/v${release}.zip
+        object: tax-calculator/v${release}.zip   # zip CI already put in the bucket; nothing is uploaded
     invokers: ["serviceAccount:billing@${project_id}.iam.gserviceaccount.com"]
 
   # The same, pinned to one object generation: re-uploading the object does
@@ -53,9 +54,9 @@ functions:
       entry_point: Rates
       source:
         object: fx-rates/v${release}.zip
-        generation: ${fx_rates_generation}
+        generation: ${fx_rates_generation}   # deploy exactly this upload of the object
     service_config:
-      min_instance_count: 1
+      min_instance_count: 1             # one instance always running: no cold starts
 
   # Cloud Source Repositories (available to existing CSR customers): a tag in
   # this project's repository, and a branch in a shared one.
@@ -65,10 +66,10 @@ functions:
       runtime: python311
       entry_point: export
       source:
-        repo:
+        repo:                           # build from a Cloud Source Repositories repository
           repo_name: legacy-export
-          tag_name: v${release}
-          dir: functions/export
+          tag_name: v${release}         # the commit with this tag
+          dir: functions/export         # folder in the repository that holds the code
   legacy-import:
     description: Import endpoint, built from the main branch of a shared repository.
     build_config:
@@ -76,7 +77,7 @@ functions:
       entry_point: import_data
       source:
         repo:
-          project_id: shared-code
+          project_id: shared-code       # repository in another project
           repo_name: integrations
-          branch_name: ^main$
+          branch_name: ^main$           # the latest commit on main (a regex)
           dir: import

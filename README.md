@@ -176,6 +176,7 @@ See [docs/design.md](docs/design.md) for why it is built this way.
 
 - [docs/configuration.md](docs/configuration.md): file structure, templating, defaults and how they merge, precedence, validation
 - [docs/functions.md](docs/functions.md): every key of a function
+- [docs/yaml-reference.md](docs/yaml-reference.md): every key on one page, nested as in the file, with defaults, allowed values and copy-ready combinations
 - [docs/design.md](docs/design.md): how configuration flows through the module
 - [docs/testing.md](docs/testing.md): the test layers and how to run them
 - [docs/troubleshooting.md](docs/troubleshooting.md): common errors and their fixes

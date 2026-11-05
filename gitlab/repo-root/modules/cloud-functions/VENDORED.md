@@ -5,7 +5,7 @@ This directory and `modules/cf-config/` are a copy of the upstream module, kept 
 | | |
 |---|---|
 | Upstream | https://github.com/dsbip/terraform-google-cloud-functions-yaml |
-| Version | 1.0.0 (see `CHANGELOG.md`), copied from commit `a7c4c65` |
+| Version | 1.0.0 (see `CHANGELOG.md`), copied from commit `a4a9f5f` |
 | Local changes | `functions.tf`: `source = "../cf-config/function"` instead of `"./modules/function"` (the repository's layout, below) |
 
 ## Layout

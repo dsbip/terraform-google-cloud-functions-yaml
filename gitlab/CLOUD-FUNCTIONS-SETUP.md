@@ -32,7 +32,7 @@ repo-root/
 │       ├── versions.tf, variables.tf, main.tf, validation.tf, outputs.tf
 │       ├── schemas/
 │       │   └── cloud-functions-config.schema.json   read on every plan (validation) and by editors
-│       ├── docs/                         configuration.md, functions.md (every key), design.md, troubleshooting.md
+│       ├── docs/                         yaml-reference.md (every key on one page), configuration.md, functions.md, design.md, troubleshooting.md
 │       └── README.md, CHANGELOG.md, LICENSE
 ├── src/
 │   └── cloud-functions/                  NEW: function code, one folder per function, shared by all environments

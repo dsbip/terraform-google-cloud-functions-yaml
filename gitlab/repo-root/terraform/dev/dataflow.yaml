@@ -17,7 +17,7 @@
 #   already exist (sa.yaml, gcs.yaml, iam-bindings.yaml, bq.yaml).
 # - The file is rendered with templatefile(): a literal dollar sign followed by
 #   an opening brace must be written as $${ (see docs/configuration.md).
-# - All keys: modules/dataflow/docs/jobs.md and pipelines.md
+# - Every key, explained: modules/dataflow/docs/config-reference.yaml
 #
 # Every entry starts with enabled: false, so the file can be planned as it is.
 # Replace every REPLACE-ME, then set enabled: true on the entries you want.

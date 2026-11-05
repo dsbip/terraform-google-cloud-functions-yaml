@@ -35,7 +35,7 @@ repo-root/                                     the root of the GitLab repository
 │   │   ├── main.tf, validation.tf, variables.tf, outputs.tf, versions.tf
 │   │   ├── schemas/
 │   │   │   └── dataflow-config.schema.json    read on every plan (validation) and by editors
-│   │   ├── docs/                              configuration.md, jobs.md, pipelines.md (every key), design.md, troubleshooting.md
+│   │   ├── docs/                              config-reference.yaml (every key in one file), configuration.md, jobs.md, pipelines.md, design.md, troubleshooting.md
 │   │   └── README.md, CHANGELOG.md, LICENSE
 │   └── dataflow-config/                       NEW: the submodules, unchanged
 │       ├── classic-job/                       google_dataflow_job

@@ -5,7 +5,7 @@ This directory and `modules/dataflow-config/` are a copy of the upstream module,
 | | |
 |---|---|
 | Upstream | https://github.com/dsbip/terraform-google-dataflow-yaml |
-| Version | 1.0.0 (see `CHANGELOG.md`), copied from commit `704a027` |
+| Version | 1.0.0 (see `CHANGELOG.md`), copied from commit `a2103af` |
 | Local changes | `jobs.tf` and `pipelines.tf`: `source = "../dataflow-config/<name>"` instead of `"./modules/<name>"` (the repository's layout, below), three lines, each file with a comment saying so. `README.md`: written for this repository, because upstream's links into `examples/` and `tests/` don't resolve here. |
 
 ## Layout
@@ -45,7 +45,7 @@ Steps 2 and 3 from the repository root, with the new version checked out next to
 UPSTREAM=../terraform-google-dataflow-yaml
 cp "$UPSTREAM"/{main,validation,jobs,pipelines,variables,outputs,versions}.tf modules/dataflow/
 cp "$UPSTREAM"/schemas/dataflow-config.schema.json modules/dataflow/schemas/
-cp "$UPSTREAM"/docs/{configuration,jobs,pipelines,design,troubleshooting}.md modules/dataflow/docs/
+cp "$UPSTREAM"/docs/{configuration,jobs,pipelines,design,troubleshooting}.md "$UPSTREAM"/docs/config-reference.yaml modules/dataflow/docs/
 cp "$UPSTREAM"/CHANGELOG.md "$UPSTREAM"/LICENSE modules/dataflow/
 for m in classic-job flex-job pipeline; do cp "$UPSTREAM"/modules/$m/*.tf modules/dataflow-config/$m/; done
 sed -i 's#"./modules/#"../dataflow-config/#' modules/dataflow/jobs.tf modules/dataflow/pipelines.tf

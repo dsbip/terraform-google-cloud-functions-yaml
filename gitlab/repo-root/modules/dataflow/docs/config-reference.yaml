@@ -1,0 +1,318 @@
+# Dataflow YAML configuration: every key, explained
+#
+# The file that the module's config_file input points to, with every key the
+# module accepts and what it does. It is a reference to copy from, not a file
+# to deploy:
+#   PART 1  every key, with its value left empty
+#   PART 2  the smallest valid entry of every combination
+#
+# How to read it
+#   [Required]    the plan fails without it
+#   [Optional]    may be left out; the default is given where there is one
+#   (Flex only)   only for Flex Templates; (Classic only) only for classic
+#                 templates. The plan reports the key on an entry of the other
+#                 type; as a default it is simply skipped for that type.
+#   (Batch only)  only for batch pipelines. The plan reports it on a streaming
+#                 pipeline, also when it comes from defaults.
+#   (Streaming)   only has an effect on streaming jobs (not checked)
+#   <...>         a name or value you choose
+#
+# The combinations
+#   The template key decides whether an entry is Flex or classic:
+#     google_template: { name: NAME }                  Flex, a template Google provides
+#     google_template: { name: NAME, type: classic }   classic, a template Google provides
+#     container_spec_gcs_path: gs://BUCKET/SPEC.json   Flex, your own Flex Template
+#     template_gcs_path: gs://BUCKET/TEMPLATE          classic, your own classic template
+#   All four work under jobs and under pipelines. A pipeline is also batch or
+#   streaming:
+#     schedule set (type defaults to BATCH)            a new job on every scheduled run
+#     type: BATCH and no schedule                      a new job only when you start a run
+#     no schedule (type defaults to STREAMING)         one job that keeps running
+#   A job is streaming or batch depending on its template. A batch job is
+#   launched again by every terraform apply (the provider forgets finished
+#   jobs), so recurring batch work belongs under pipelines.
+#
+# Precedence (the first one that is set wins)
+#   project: entry project_id, defaults.jobs/pipelines project_id, top-level project_id, module project_id
+#   region:  entry region, defaults.jobs/pipelines region, defaults.region, module region
+#
+# The plan checks the whole file first, disabled entries included, and lists
+# every problem with its path, e.g. "jobs.my-job: temp_location is required for
+# classic templates". The module renders the file with templatefile() before
+# reading it, so placeholders from its template_vars input work in values (see
+# docs/configuration.md).
+
+---
+# =============================================================================
+# PART 1: EVERY KEY
+# =============================================================================
+
+project_id:                             # [Optional] The project every job and pipeline runs in, e.g. my-project.
+                                        #   Needed unless every entry sets its own or the module's project_id input is set.
+
+defaults:                               # [Optional] Settings every entry gets unless it sets its own. Mappings (labels,
+                                        #   parameters, google_template) merge key by key; lists and single values are
+                                        #   replaced; an empty key never overrides a default.
+  region:                               # [Optional] The region every job and pipeline runs in, e.g. europe-west2.
+                                        #   Needed unless every entry sets its own or the module's region input is set.
+  labels:                               # [Optional] Labels on every job, and on every job a pipeline launches.
+    <label key>: <value>                #   Later wins: module labels, defaults.labels, defaults.jobs/pipelines labels,
+                                        #   the entry's labels. Numbers and true/false become strings.
+  jobs:                                 # [Optional] Defaults for every job: any key of <JOB KEY> below except name.
+                                        #   Tip: name it with an anchor (jobs: &workers) to reuse it for pipelines.
+  pipelines:                            # [Optional] Defaults for every pipeline: any key of <PIPELINE KEY> below except
+                                        #   name and job_name. Reuse the job defaults with <<: *workers.
+
+jobs:                                   # [Optional] Dataflow jobs, one entry per job.
+  <JOB KEY>:                            # [Required] Your name for the job, and its Dataflow job name unless name is set:
+                                        #   lowercase letters, digits and hyphens, starting with a letter. It is part of
+                                        #   the Terraform address, so renaming it replaces the job.
+    enabled:                            # [Optional] false keeps the entry in the file but deploys nothing (default true).
+                                        #   A disabled entry is still checked.
+    name:                               # [Optional] The job name in Dataflow, if it should differ from <JOB KEY>.
+                                        #   Same characters as the key. Cannot be a default.
+    project_id:                         # [Optional] Run this job in another project.
+    region:                             # [Optional] Run this job in another region.
+
+    # The template: set exactly one of the next three keys.
+    template_gcs_path:                  # [Required, one of three] Your own classic template, which makes this a classic
+                                        #   job, e.g. gs://BUCKET/templates/MY-TEMPLATE.
+    container_spec_gcs_path:            # [Required, one of three] Your own Flex Template, which makes this a Flex job:
+                                        #   the spec file that gcloud dataflow flex-template build wrote, e.g.
+                                        #   gs://BUCKET/templates/MY-TEMPLATE.json.
+    google_template:                    # [Required, one of three] A template Google provides, by name.
+      name:                             # [Required] The template name, e.g. PubSub_to_BigQuery_Flex,
+                                        #   GCS_Text_to_BigQuery_Flex (Flex) or Word_Count (classic).
+      type:                             # [Optional] flex (default) or classic; must match the template.
+      version:                          # [Optional] latest (default) or a fixed release, e.g. 2026-09-15-00_RC00.
+    parameters:                         # [Optional] The template's inputs; their names come from the template.
+      <parameter name>: <value>         #   Numbers and true/false are passed as strings.
+    labels:                             # [Optional] Extra labels on this job.
+      <label key>: <value>
+
+    # Workers
+    temp_location:                      # [Optional] gs:// folder for temporary files, e.g. gs://BUCKET/tmp.
+                                        #   Required for classic jobs.
+    staging_location:                   # [Optional] (Flex only) gs:// folder for the job's staged files.
+    service_account_email:              # [Optional] The identity the workers run as. Needs roles/dataflow.worker and
+                                        #   access to the job's sources and sinks. Default: the Compute Engine default
+                                        #   service account.
+    network:                            # [Optional] The VPC network of the workers (default: the network "default").
+    subnetwork:                         # [Optional] The subnetwork of the workers: regions/REGION/subnetworks/NAME, or
+                                        #   the full https://www.googleapis.com/compute/v1/... URL for Shared VPC.
+    ip_configuration:                   # [Optional] WORKER_IP_PUBLIC (default) or WORKER_IP_PRIVATE (no public IPs;
+                                        #   needs Private Google Access on the subnetwork).
+    zone:                               # [Optional] (Classic only) Run the workers in this zone, e.g. europe-west2-a.
+    machine_type:                       # [Optional] The size of each worker VM, e.g. n2-standard-4.
+    num_workers:                        # [Optional] (Flex only) Workers to start with, 1 to 4000; at most max_workers.
+    max_workers:                        # [Optional] The most workers autoscaling may use, 1 to 4000.
+    autoscaling_algorithm:              # [Optional] (Flex only) AUTOSCALING_ALGORITHM_BASIC (scale between num_workers and
+                                        #   max_workers) or AUTOSCALING_ALGORITHM_NONE (always num_workers).
+    launcher_machine_type:              # [Optional] (Flex only) The size of the VM that starts the job (default
+                                        #   n1-standard-1).
+    sdk_container_image:                # [Optional] (Flex only) Your own container image for the workers.
+    kms_key_name:                       # [Optional] Cloud KMS key that encrypts the job's data (CMEK):
+                                        #   projects/P/locations/L/keyRings/R/cryptoKeys/K.
+    enable_streaming_engine:            # [Optional] (Streaming) true keeps streaming state in Dataflow's backend
+                                        #   instead of on the workers.
+    additional_experiments:             # [Optional] Dataflow experiments, a list, e.g. [enable_prime].
+    additional_pipeline_options:        # [Optional] (Flex only) Extra Beam pipeline options, a list,
+                                        #   e.g. [numberOfWorkerHarnessThreads=12].
+
+    # Updates and removal
+    transform_name_mapping:             # [Optional] (Streaming) Steps renamed since the running job started, so it can
+      <old step name>: <new step name>  #   be updated in place.
+    create_ignore_already_exists:       # [Optional] (Flex only) true takes over a running job with the same name
+                                        #   instead of failing the apply.
+    on_delete:                          # [Optional] What happens to the running job when the entry is removed or the
+                                        #   job is replaced: drain (finish in-flight data, then stop) or cancel (stop at
+                                        #   once). Default: drain for classic jobs, cancel for Flex jobs.
+    skip_wait_on_job_termination:       # [Optional] true: don't wait for the drain or cancel to finish. A new job must
+                                        #   then use another name.
+    deletion_policy:                    # [Optional] DELETE (default), PREVENT (terraform destroy fails while the job
+                                        #   exists) or ABANDON (Terraform forgets the job and leaves it running).
+
+pipelines:                              # [Optional] Data Pipelines, one entry per pipeline. A pipeline launches a new
+                                        #   job on every scheduled run (batch) or keeps one job running (streaming).
+                                        #   It needs Cloud Scheduler, so only App Engine regions work.
+  <PIPELINE KEY>:                       # [Required] Your name for the pipeline, and its ID unless name is set: letters,
+                                        #   digits, hyphens and underscores, at most 63. Renaming it replaces it.
+    enabled:                            # [Optional] false keeps the entry in the file but deploys nothing (default true).
+                                        #   A disabled entry is still checked.
+    name:                               # [Optional] The pipeline ID, if it should differ from <PIPELINE KEY>.
+                                        #   Cannot be a default.
+    display_name:                       # [Optional] The name shown in the console (default: the pipeline ID); letters,
+                                        #   digits, hyphens and underscores.
+    project_id:                         # [Optional] Run this pipeline and its jobs in another project.
+    region:                             # [Optional] Run this pipeline and its jobs in another region.
+
+    # What runs, and when
+    type:                               # [Optional] BATCH (a new job on every run) or STREAMING (one job that keeps
+                                        #   running). Default: BATCH with a schedule, STREAMING without.
+    state:                              # [Optional] ACTIVE (default) or PAUSED (the pipeline exists but launches nothing).
+    schedule:                           # [Optional] (Batch only) Cron schedule, e.g. "0 2 * * *" (every day at 02:00).
+                                        #   A batch pipeline without one runs only when you start a run.
+    time_zone:                          # [Optional] Time zone of the schedule, e.g. Europe/London (default UTC). Needs
+                                        #   schedule on the same pipeline; a default one is unused where there is none.
+    scheduler_service_account_email:    # [Optional] The identity Cloud Scheduler uses to start each run. Default: the
+                                        #   Compute Engine default service account.
+    job_name:                           # [Optional] The name of the jobs it launches. Default: the pipeline ID in
+                                        #   lowercase with _ as - (Daily_Load gives daily-load). Cannot be a default.
+    pipeline_sources:                   # [Optional] Free-form notes on where the pipeline comes from.
+      <key>: <value>
+
+    # The template: set exactly one of the next three keys (as for jobs).
+    template_gcs_path:                  # [Required, one of three] Your own classic template, which makes this a classic
+                                        #   pipeline, e.g. gs://BUCKET/templates/MY-TEMPLATE.
+    container_spec_gcs_path:            # [Required, one of three] Your own Flex Template spec file, which makes this a
+                                        #   Flex pipeline, e.g. gs://BUCKET/templates/MY-TEMPLATE.json.
+    google_template:                    # [Required, one of three] A template Google provides, by name.
+      name:                             # [Required] The template name, e.g. GCS_Text_to_BigQuery_Flex.
+      type:                             # [Optional] flex (default) or classic; must match the template.
+      version:                          # [Optional] latest (default) or a fixed release, e.g. 2026-09-15-00_RC00.
+    parameters:                         # [Optional] The template's inputs; their names come from the template.
+      <parameter name>: <value>         #   Numbers and true/false are passed as strings.
+    launch_options:                     # [Optional] (Flex only) Flex launch settings that are not template inputs,
+      <option>: <value>                 #   e.g. enableLauncherVmSerialPortLogging: "true".
+    labels:                             # [Optional] Labels on every job the pipeline launches.
+      <label key>: <value>
+
+    # Workers
+    temp_location:                      # [Optional] gs:// folder for temporary files, e.g. gs://BUCKET/tmp.
+    bypass_temp_dir_validation:         # [Optional] (Classic only) true: don't check temp_location before launching.
+    service_account_email:              # [Optional] The identity the workers run as (as for jobs).
+    network:                            # [Optional] The VPC network of the workers (as for jobs).
+    subnetwork:                         # [Optional] The subnetwork of the workers (as for jobs).
+    ip_configuration:                   # [Optional] WORKER_IP_PUBLIC (default) or WORKER_IP_PRIVATE (as for jobs).
+    worker_region:                      # [Optional] Run the workers in this region instead of the pipeline's (e.g. close
+                                        #   to the data). Set worker_region or worker_zone, not both.
+    worker_zone:                        # [Optional] Run the workers in this zone, e.g. europe-west2-a.
+    zone:                               # [Optional] Worker zone, the older form of worker_zone.
+    machine_type:                       # [Optional] The size of each worker VM, e.g. n2-standard-4.
+    num_workers:                        # [Optional] Workers to start with, 1 to 4000; at most max_workers.
+    max_workers:                        # [Optional] The most workers autoscaling may use, 1 to 4000.
+    kms_key_name:                       # [Optional] Cloud KMS key that encrypts the jobs' data (CMEK).
+    enable_streaming_engine:            # [Optional] (Streaming) true keeps streaming state in Dataflow's backend.
+    additional_experiments:             # [Optional] Dataflow experiments, a list, e.g. [use_runner_v2].
+    flexrs_goal:                        # [Optional] (Flex only) (Batch only) FLEXRS_COST_OPTIMIZED (cheaper; a run may
+                                        #   start later) or FLEXRS_SPEED_OPTIMIZED.
+
+    # Updates and removal
+    update:                             # [Optional] (Streaming) true updates the running job in place instead of
+                                        #   starting a new one.
+    transform_name_mapping:             # [Optional] (Streaming) Steps renamed since the running job started, used with
+      <old step name>: <new step name>  #   update.
+    validate_only:                      # [Optional] true only checks the launch request; no job is started.
+    deletion_policy:                    # [Optional] DELETE (default), PREVENT (terraform destroy fails while the
+                                        #   pipeline exists) or ABANDON (Terraform forgets the pipeline and leaves it).
+
+    # Pipelines have no on_delete, skip_wait_on_job_termination, staging_location,
+    # launcher_machine_type, sdk_container_image, autoscaling_algorithm,
+    # additional_pipeline_options or create_ignore_already_exists.
+
+---
+# =============================================================================
+# PART 2: EVERY COMBINATION, SMALLEST FORM
+#
+# One entry per combination with the keys it needs; a comment names the keys
+# that only that combination can use. Together a valid configuration once the
+# UPPERCASE placeholders are replaced. Settings every entry shares are in
+# defaults.
+# =============================================================================
+
+project_id: MY-PROJECT                  # every entry runs in this project
+
+defaults:
+  region: europe-west2                  # and in this region
+  jobs: &workers                        # worker settings of every job...
+    service_account_email: dataflow-worker@MY-PROJECT.iam.gserviceaccount.com
+    temp_location: gs://MY-BUCKET/tmp
+  pipelines:                            # ...and of every pipeline
+    <<: *workers
+    scheduler_service_account_email: dataflow-scheduler@MY-PROJECT.iam.gserviceaccount.com
+
+jobs:
+  # Flex job, a template Google provides. This one is streaming: it runs until
+  # the entry is removed.
+  flex-job-google-template:
+    google_template:
+      name: PubSub_to_BigQuery_Flex     # type: flex is the default
+    parameters:
+      inputSubscription: projects/MY-PROJECT/subscriptions/MY-SUBSCRIPTION
+      outputTableSpec: MY-PROJECT:MY_DATASET.MY_TABLE
+    enable_streaming_engine: true
+    # Only Flex jobs can also set num_workers, staging_location,
+    # launcher_machine_type, sdk_container_image, autoscaling_algorithm,
+    # additional_pipeline_options and create_ignore_already_exists.
+
+  # Flex job, your own Flex Template.
+  flex-job-own-template:
+    container_spec_gcs_path: gs://MY-BUCKET/templates/MY-FLEX-TEMPLATE.json
+    parameters:
+      MY_PARAMETER: MY-VALUE            # your template's own inputs
+
+  # Classic job, a template Google provides. This one is batch: every
+  # terraform apply launches it again.
+  classic-job-google-template:
+    google_template:
+      name: Word_Count
+      type: classic
+    parameters:
+      inputFile: gs://dataflow-samples/shakespeare/kinglear.txt
+      output: gs://MY-BUCKET/wordcount/out
+    # Classic jobs need temp_location; this one gets it from defaults.jobs.
+    # Only classic jobs can also set zone.
+
+  # Classic job, your own classic template.
+  classic-job-own-template:
+    template_gcs_path: gs://MY-BUCKET/templates/MY-CLASSIC-TEMPLATE
+    temp_location: gs://MY-BUCKET/tmp   # required for classic jobs (here or in defaults.jobs)
+
+pipelines:
+  # Batch pipeline, Flex Template, on a schedule.
+  batch-flex-pipeline:
+    schedule: "0 2 * * *"               # every day at 02:00; a schedule makes it BATCH
+    time_zone: Europe/London            # default UTC
+    google_template:
+      name: GCS_Text_to_BigQuery_Flex
+    parameters:
+      inputFilePattern: gs://MY-BUCKET/landing/*.json
+      JSONPath: gs://MY-BUCKET/schemas/MY_TABLE.json
+      outputTable: MY-PROJECT:MY_DATASET.MY_TABLE
+      bigQueryLoadingTemporaryDirectory: gs://MY-BUCKET/bq-tmp
+    # Only Flex pipelines can also set launch_options, and flexrs_goal (batch only).
+
+  # Batch pipeline, classic template, on a schedule.
+  batch-classic-pipeline:
+    schedule: "0 5 1 * *"               # 05:00 on the 1st of every month
+    google_template:
+      name: Bulk_Compress_GCS_Files
+      type: classic
+    parameters:
+      inputFilePattern: gs://MY-BUCKET/logs/*.log
+      outputDirectory: gs://MY-BUCKET/archive/
+      outputFailureFile: gs://MY-BUCKET/archive/failures.csv
+      compression: GZIP
+    # Only classic pipelines can also set bypass_temp_dir_validation.
+
+  # Batch pipeline without a schedule: a job starts only when you start a run
+  # (console or API).
+  on-demand-pipeline:
+    type: BATCH                         # without a schedule the default would be STREAMING
+    container_spec_gcs_path: gs://MY-BUCKET/templates/MY-BATCH-TEMPLATE.json
+
+  # Streaming pipeline, Flex Template: keeps one job running.
+  streaming-flex-pipeline:
+    type: STREAMING                     # also the default without a schedule
+    google_template:
+      name: PubSub_to_BigQuery_Flex
+    parameters:
+      inputSubscription: projects/MY-PROJECT/subscriptions/MY-OTHER-SUBSCRIPTION
+      outputTableSpec: MY-PROJECT:MY_DATASET.MY_OTHER_TABLE
+    enable_streaming_engine: true
+    # Streaming pipelines cannot set schedule, time_zone or flexrs_goal.
+    # update: true (with transform_name_mapping) changes the running job in place.
+
+  # Streaming pipeline, classic template.
+  streaming-classic-pipeline:
+    template_gcs_path: gs://MY-BUCKET/templates/MY-STREAMING-TEMPLATE

@@ -53,7 +53,7 @@ pipelines:                                # recurring batch work, launched by Cl
 
 | Reference | Covers |
 |---|---|
-| [docs/config-reference.yaml](docs/config-reference.yaml) | every key in one YAML file, marked required or optional, with what it does; the smallest entry of every job and pipeline combination |
+| [docs/yaml-reference.md](docs/yaml-reference.md) | every key on one page, nested as in the file, with defaults, allowed values and copy-ready combinations |
 | [docs/configuration.md](docs/configuration.md) | file structure, defaults and how they merge, templating, YAML anchors, precedence, validation |
 | [docs/jobs.md](docs/jobs.md) | every job key; classic, Flex and Google-provided templates |
 | [docs/pipelines.md](docs/pipelines.md) | every pipeline key |
